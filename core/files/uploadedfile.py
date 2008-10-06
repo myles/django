@@ -3,7 +3,6 @@ Classes representing uploaded files.
 """
 
 import os
-import tempfile
 import warnings
 try:
     from cStringIO import StringIO
@@ -11,6 +10,9 @@ except ImportError:
     from StringIO import StringIO
 
 from django.conf import settings
+from django.core.files.base import File
+
+from django.core.files import temp as tempfile
 
 __all__ = ('UploadedFile', 'TemporaryUploadedFile', 'InMemoryUploadedFile', 'SimpleUploadedFile')
 
@@ -38,7 +40,7 @@ def deprecated_property(old, new, readonly=False):
     else:
         return property(getter, setter)
 
-class UploadedFile(object):
+class UploadedFile(File):
     """
     A abstract uploaded file (``TemporaryUploadedFile`` and
     ``InMemoryUploadedFile`` are the built-in concrete subclasses).
@@ -75,23 +77,6 @@ class UploadedFile(object):
 
     name = property(_get_name, _set_name)
 
-    def chunks(self, chunk_size=None):
-        """
-        Read the file and yield chucks of ``chunk_size`` bytes (defaults to
-        ``UploadedFile.DEFAULT_CHUNK_SIZE``).
-        """
-        if not chunk_size:
-            chunk_size = UploadedFile.DEFAULT_CHUNK_SIZE
-
-        if hasattr(self, 'seek'):
-            self.seek(0)
-        # Assume the pointer is at zero...
-        counter = self.size
-
-        while counter > 0:
-            yield self.read(chunk_size)
-            counter -= chunk_size
-
     # Deprecated properties
     filename = deprecated_property(old="filename", new="name")
     file_name = deprecated_property(old="file_name", new="name")
@@ -107,18 +92,6 @@ class UploadedFile(object):
         return self.read()
     data = property(_get_data)
 
-    def multiple_chunks(self, chunk_size=None):
-        """
-        Returns ``True`` if you can expect multiple chunks.
-
-        NB: If a particular file representation is in memory, subclasses should
-        always return ``False`` -- there's no good reason to read from memory in
-        chunks.
-        """
-        if not chunk_size:
-            chunk_size = UploadedFile.DEFAULT_CHUNK_SIZE
-        return self.size > chunk_size
-
     # Abstract methods; subclasses *must* define read() and probably should
     # define open/close.
     def read(self, num_bytes=None):
@@ -129,33 +102,6 @@ class UploadedFile(object):
 
     def close(self):
         pass
-
-    def xreadlines(self):
-        return self
-
-    def readlines(self):
-        return list(self.xreadlines())
-
-    def __iter__(self):
-        # Iterate over this file-like object by newlines
-        buffer_ = None
-        for chunk in self.chunks():
-            chunk_buffer = StringIO(chunk)
-
-            for line in chunk_buffer:
-                if buffer_:
-                    line = buffer_ + line
-                    buffer_ = None
-
-                # If this is the end of a line, yield
-                # otherwise, wait for the next round
-                if line[-1] in ('\n', '\r'):
-                    yield line
-                else:
-                    buffer_ = line
-
-        if buffer_ is not None:
-            yield buffer_
 
     # Backwards-compatible support for uploaded-files-as-dictionaries.
     def __getitem__(self, key):
@@ -201,11 +147,21 @@ class TemporaryUploadedFile(UploadedFile):
     def read(self, *args):          return self._file.read(*args)
     def seek(self, offset):         return self._file.seek(offset)
     def write(self, s):             return self._file.write(s)
-    def close(self):                return self._file.close()
     def __iter__(self):             return iter(self._file)
     def readlines(self, size=None): return self._file.readlines(size)
     def xreadlines(self):           return self._file.xreadlines()
-
+    def close(self):
+        try:
+            return self._file.close()
+        except OSError, e:
+            if e.errno == 2:
+                # Means the file was moved or deleted before the tempfile could unlink it.
+                # Still sets self._file.close_called and calls self._file.file.close()
+                # before the exception
+                return
+            else: 
+                raise e
+        
 class InMemoryUploadedFile(UploadedFile):
     """
     A file uploaded into memory (i.e. stream-to-memory).

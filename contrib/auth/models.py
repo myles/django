@@ -78,7 +78,7 @@ class Permission(models.Model):
         verbose_name = _('permission')
         verbose_name_plural = _('permissions')
         unique_together = (('content_type', 'codename'),)
-        ordering = ('content_type', 'codename')
+        ordering = ('content_type__app_label', 'codename')
 
     def __unicode__(self):
         return u"%s | %s | %s" % (self.content_type.app_label, self.content_type, self.name)
@@ -356,6 +356,9 @@ class AnonymousUser(object):
     user_permissions = property(_get_user_permissions)
 
     def has_perm(self, perm):
+        return False
+
+    def has_perms(self, perm_list):
         return False
 
     def has_module_perms(self, module):

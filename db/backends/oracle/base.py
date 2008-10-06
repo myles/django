@@ -5,10 +5,11 @@ Requires cx_Oracle: http://www.python.net/crew/atuining/cx_Oracle/
 """
 
 import os
+import datetime
+import time
 
 from django.db.backends import BaseDatabaseWrapper, BaseDatabaseFeatures, BaseDatabaseOperations, util
 from django.db.backends.oracle import query
-from django.utils.datastructures import SortedDict
 from django.utils.encoding import smart_str, force_unicode
 
 # Oracle takes client-side character set encoding from the environment.
@@ -29,9 +30,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     supports_tablespaces = True
     uses_case_insensitive_names = True
     uses_custom_query_class = True
-    time_field_needs_date = True
     interprets_empty_strings_as_nulls = True
-    date_field_supports_time_value = False
 
 class DatabaseOperations(BaseDatabaseOperations):
     def autoinc_sql(self, table, column):
@@ -181,6 +180,21 @@ class DatabaseOperations(BaseDatabaseOperations):
     def tablespace_sql(self, tablespace, inline=False):
         return "%sTABLESPACE %s" % ((inline and "USING INDEX " or ""), self.quote_name(tablespace))
 
+    def value_to_db_time(self, value):
+        if value is None:
+            return None
+        if isinstance(value, basestring):
+            return datetime.datetime(*(time.strptime(value, '%H:%M:%S')[:6]))
+        return datetime.datetime(1900, 1, 1, value.hour, value.minute,
+                                 value.second, value.microsecond)
+
+    def year_lookup_bounds_for_date_field(self, value):
+        first = '%s-01-01'
+        second = '%s-12-31'
+        return [first % value, second % value]
+
+
+
 class DatabaseWrapper(BaseDatabaseWrapper):
     features = DatabaseFeatures()
     ops = DatabaseOperations()
@@ -243,6 +257,26 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         cursor.arraysize = 100
         return cursor
 
+class OracleParam(object):
+    """
+    Wrapper object for formatting parameters for Oracle. If the string
+    representation of the value is large enough (greater than 4000 characters)
+    the input size needs to be set as NCLOB. Alternatively, if the parameter has
+    an `input_size` attribute, then the value of the `input_size` attribute will
+    be used instead. Otherwise, no input size will be set for the parameter when
+    executing the query.
+    """
+    def __init__(self, param, charset, strings_only=False):
+        self.smart_str = smart_str(param, charset, strings_only)
+        if hasattr(param, 'input_size'):
+            # If parameter has `input_size` attribute, use that.
+            self.input_size = param.input_size
+        elif isinstance(param, basestring) and len(param) > 4000:
+            # Mark any string parameter greater than 4000 characters as an NCLOB.
+            self.input_size = Database.NCLOB
+        else:
+            self.input_size = None
+
 class FormatStylePlaceholderCursor(Database.Cursor):
     """
     Django uses "format" (e.g. '%s') style placeholders, but Oracle uses ":var"
@@ -257,15 +291,13 @@ class FormatStylePlaceholderCursor(Database.Cursor):
     def _format_params(self, params):
         if isinstance(params, dict):
             result = {}
-            charset = self.charset
             for key, value in params.items():
-                result[smart_str(key, charset)] = smart_str(value, charset)
+                result[smart_str(key, self.charset)] = OracleParam(param, self.charset)
             return result
         else:
-            return tuple([smart_str(p, self.charset, True) for p in params])
+            return tuple([OracleParam(p, self.charset, True) for p in params])
 
     def _guess_input_sizes(self, params_list):
-        # Mark any string parameter greater than 4000 characters as an NCLOB.
         if isinstance(params_list[0], dict):
             sizes = {}
             iterators = [params.iteritems() for params in params_list]
@@ -274,12 +306,17 @@ class FormatStylePlaceholderCursor(Database.Cursor):
             iterators = [enumerate(params) for params in params_list]
         for iterator in iterators:
             for key, value in iterator:
-                if isinstance(value, basestring) and len(value) > 4000:
-                    sizes[key] = Database.NCLOB
+                if value.input_size: sizes[key] = value.input_size
         if isinstance(sizes, dict):
             self.setinputsizes(**sizes)
         else:
             self.setinputsizes(*sizes)
+
+    def _param_generator(self, params):
+        if isinstance(params, dict):
+            return dict([(k, p.smart_str) for k, p in params.iteritems()])
+        else:
+            return [p.smart_str for p in params]
 
     def execute(self, query, params=None):
         if params is None:
@@ -295,7 +332,7 @@ class FormatStylePlaceholderCursor(Database.Cursor):
             query = query[:-1]
         query = smart_str(query, self.charset) % tuple(args)
         self._guess_input_sizes([params])
-        return Database.Cursor.execute(self, query, params)
+        return Database.Cursor.execute(self, query, self._param_generator(params))
 
     def executemany(self, query, params=None):
         try:
@@ -310,9 +347,9 @@ class FormatStylePlaceholderCursor(Database.Cursor):
         if query.endswith(';') or query.endswith('/'):
             query = query[:-1]
         query = smart_str(query, self.charset) % tuple(args)
-        new_param_list = [self._format_params(i) for i in params]
-        self._guess_input_sizes(new_param_list)
-        return Database.Cursor.executemany(self, query, new_param_list)
+        formatted = [self._format_params(i) for i in params]
+        self._guess_input_sizes(formatted)
+        return Database.Cursor.executemany(self, query, [self._param_generator(p) for p in formatted])
 
     def fetchone(self):
         row = Database.Cursor.fetchone(self)

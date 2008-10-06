@@ -181,7 +181,7 @@ def sql_delete(app, style):
     for model in app_models:
         opts = model._meta
         for f in opts.local_many_to_many:
-            if isinstance(f.rel, generic.GenericRel):
+            if not f.creates_table:
                 continue
             if cursor and table_name_converter(f.m2m_db_table()) in table_names:
                 output.append("%s %s;" % (style.SQL_KEYWORD('DROP TABLE'),
@@ -219,7 +219,7 @@ def sql_flush(style, only_django=False):
     statements = connection.ops.sql_flush(style, tables, sequence_list())
     return statements
 
-def sql_custom(app):
+def sql_custom(app, style):
     "Returns a list of the custom table modifying SQL statements for the given app."
     from django.db.models import get_models
     output = []
@@ -228,7 +228,7 @@ def sql_custom(app):
     app_dir = os.path.normpath(os.path.join(os.path.dirname(app.__file__), 'sql'))
 
     for model in app_models:
-        output.extend(custom_sql_for_model(model))
+        output.extend(custom_sql_for_model(model, style))
 
     return output
 
@@ -242,7 +242,7 @@ def sql_indexes(app, style):
 
 def sql_all(app, style):
     "Returns a list of CREATE TABLE SQL, initial-data inserts, and CREATE INDEX SQL for the given module."
-    return sql_create(app, style) + sql_custom(app) + sql_indexes(app, style)
+    return sql_create(app, style) + sql_custom(app, style) + sql_indexes(app, style)
 
 def sql_model_create(model, style, known_models=set()):
     """
@@ -353,7 +353,7 @@ def many_to_many_sql_for_model(model, style):
     qn = connection.ops.quote_name
     inline_references = connection.features.inline_fk_references
     for f in opts.local_many_to_many:
-        if not isinstance(f.rel, generic.GenericRel):
+        if f.creates_table:
             tablespace = f.db_tablespace or opts.db_tablespace
             if tablespace and connection.features.supports_tablespaces: 
                 tablespace_sql = ' ' + connection.ops.tablespace_sql(tablespace, inline=True)
@@ -426,13 +426,21 @@ def many_to_many_sql_for_model(model, style):
 
     return final_output
 
-def custom_sql_for_model(model):
+def custom_sql_for_model(model, style):
     from django.db import models
     from django.conf import settings
 
     opts = model._meta
     app_dir = os.path.normpath(os.path.join(os.path.dirname(models.get_app(model._meta.app_label).__file__), 'sql'))
     output = []
+
+    # Post-creation SQL should come before any initial SQL data is loaded.
+    # However, this should not be done for fields that are part of a a parent
+    # model (via model inheritance).
+    nm = opts.init_name_map()
+    post_sql_fields = [f for f in opts.local_fields if hasattr(f, 'post_create_sql')]
+    for f in post_sql_fields:
+        output.extend(f.post_create_sql(style, model._meta.db_table))
 
     # Some backends can't execute more than one SQL statement at a time,
     # so split into separate statements.
@@ -484,6 +492,6 @@ def emit_post_sync_signal(created_models, verbosity, interactive):
         app_name = app.__name__.split('.')[-2]
         if verbosity >= 2:
             print "Running post-sync handlers for application", app_name
-        dispatcher.send(signal=models.signals.post_syncdb, sender=app,
-            app=app, created_models=created_models,
-            verbosity=verbosity, interactive=interactive)
+        models.signals.post_syncdb.send(sender=app, app=app,
+            created_models=created_models, verbosity=verbosity,
+            interactive=interactive)

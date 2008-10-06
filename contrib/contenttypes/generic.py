@@ -8,7 +8,6 @@ from django.db import connection
 from django.db.models import signals
 from django.db.models.fields.related import RelatedField, Field, ManyToManyRel
 from django.db.models.loading import get_model
-from django.dispatch import dispatcher
 from django.utils.functional import curry
 
 class GenericForeignKey(object):
@@ -29,12 +28,12 @@ class GenericForeignKey(object):
         self.cache_attr = "_%s_cache" % name
 
         # For some reason I don't totally understand, using weakrefs here doesn't work.
-        dispatcher.connect(self.instance_pre_init, signal=signals.pre_init, sender=cls, weak=False)
+        signals.pre_init.connect(self.instance_pre_init, sender=cls, weak=False)
 
         # Connect myself as the descriptor for this field
         setattr(cls, name, self)
 
-    def instance_pre_init(self, signal, sender, args, kwargs):
+    def instance_pre_init(self, signal, sender, args, kwargs, **_kwargs):
         """
         Handles initializing an object with the generic FK instaed of
         content-type/object-id fields.
@@ -95,7 +94,7 @@ class GenericForeignKey(object):
         setattr(instance, self.cache_attr, value)
 
 class GenericRelation(RelatedField, Field):
-    """Provides an accessor to generic related objects (i.e. comments)"""
+    """Provides an accessor to generic related objects (e.g. comments)"""
 
     def __init__(self, to, **kwargs):
         kwargs['verbose_name'] = kwargs.get('verbose_name', None)
@@ -103,6 +102,9 @@ class GenericRelation(RelatedField, Field):
                             related_name=kwargs.pop('related_name', None),
                             limit_choices_to=kwargs.pop('limit_choices_to', None),
                             symmetrical=kwargs.pop('symmetrical', True))
+
+        # By its very nature, a GenericRelation doesn't create a table.
+        self.creates_table = False
 
         # Override content-type/object-id field names on the related class
         self.object_id_field_name = kwargs.pop("object_id_field", "object_id")
