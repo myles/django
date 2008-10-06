@@ -7,6 +7,8 @@ try:
 except ImportError:
     from StringIO import StringIO
 from django.db import models
+from django.utils.encoding import smart_str, smart_unicode
+from django.utils import datetime_safe
 
 class SerializationError(Exception):
     """Something bad happened during serialization."""
@@ -21,6 +23,10 @@ class Serializer(object):
     Abstract serializer base class.
     """
 
+    # Indicates if the implemented serializer is only available for
+    # internal Django use.
+    internal_use_only = False
+
     def serialize(self, queryset, **options):
         """
         Serialize a queryset.
@@ -33,7 +39,7 @@ class Serializer(object):
         self.start_serialization()
         for obj in queryset:
             self.start_object(obj)
-            for field in obj._meta.fields:
+            for field in obj._meta.local_fields:
                 if field.serialize:
                     if field.rel is None:
                         if self.selected_fields is None or field.attname in self.selected_fields:
@@ -54,12 +60,11 @@ class Serializer(object):
         Convert a field's value to a string.
         """
         if isinstance(field, models.DateTimeField):
-            value = getattr(obj, field.name).strftime("%Y-%m-%d %H:%M:%S")
-        elif isinstance(field, models.FileField):
-            value = getattr(obj, "get_%s_url" % field.name, lambda: None)()
+            d = datetime_safe.new_datetime(getattr(obj, field.name))
+            value = d.strftime("%Y-%m-%d %H:%M:%S")
         else:
             value = field.flatten_data(follow=None, obj=obj).get(field.name, "")
-        return str(value)
+        return smart_unicode(value)
 
     def start_serialization(self):
         """
@@ -105,9 +110,11 @@ class Serializer(object):
 
     def getvalue(self):
         """
-        Return the fully serialized queryset.
+        Return the fully serialized queryset (or None if the output stream is
+        not seekable).
         """
-        return self.stream.getvalue()
+        if callable(getattr(self.stream, 'getvalue', None)):
+            return self.stream.getvalue()
 
 class Deserializer(object):
     """
@@ -152,10 +159,15 @@ class DeserializedObject(object):
         self.m2m_data = m2m_data
 
     def __repr__(self):
-        return "<DeserializedObject: %s>" % str(self.object)
+        return "<DeserializedObject: %s>" % smart_str(self.object)
 
     def save(self, save_m2m=True):
-        self.object.save()
+        # Call save on the Model baseclass directly. This bypasses any
+        # model-defined save. The save is also forced to be raw.
+        # This ensures that the data that is deserialized is literally
+        # what came from the file, not post-processed by pre_save/save
+        # methods.
+        models.Model.save_base(self.object, raw=True)
         if self.m2m_data and save_m2m:
             for accessor_name, object_list in self.m2m_data.items():
                 setattr(self.object, accessor_name, object_list)

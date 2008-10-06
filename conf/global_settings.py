@@ -12,6 +12,11 @@ gettext_noop = lambda s: s
 DEBUG = False
 TEMPLATE_DEBUG = False
 
+# Whether the framework should propagate raw exceptions rather than catching
+# them. This is useful under some testing siutations and should never be used
+# on a live site.
+DEBUG_PROPAGATE_EXCEPTIONS = False
+
 # Whether to use the "Etag" header. This saves bandwidth but slows down performance.
 USE_ETAGS = False
 
@@ -25,12 +30,12 @@ ADMINS = ()
 INTERNAL_IPS = ()
 
 # Local time zone for this installation. All choices can be found here:
-# http://www.postgresql.org/docs/8.1/static/datetime-keywords.html#DATETIME-TIMEZONE-SET-TABLE
+# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name (although not all
+# systems may support all possibilities).
 TIME_ZONE = 'America/Chicago'
 
 # Language code for this installation. All choices can be found here:
-# http://www.w3.org/TR/REC-html40/struct/dirlang.html#langcodes
-# http://blogs.law.harvard.edu/tech/stories/storyReader$15
+# http://www.i18nguy.com/unicode/language-identifiers.html
 LANGUAGE_CODE = 'en-us'
 
 # Languages we provide translations for, out of the box. The language name
@@ -38,6 +43,7 @@ LANGUAGE_CODE = 'en-us'
 LANGUAGES = (
     ('ar', gettext_noop('Arabic')),
     ('bn', gettext_noop('Bengali')),
+    ('bg', gettext_noop('Bulgarian')),
     ('ca', gettext_noop('Catalan')),
     ('cs', gettext_noop('Czech')),
     ('cy', gettext_noop('Welsh')),
@@ -46,23 +52,32 @@ LANGUAGES = (
     ('el', gettext_noop('Greek')),
     ('en', gettext_noop('English')),
     ('es', gettext_noop('Spanish')),
-    ('es_AR', gettext_noop('Argentinean Spanish')),
+    ('et', gettext_noop('Estonian')), 
+    ('es-ar', gettext_noop('Argentinean Spanish')),
+    ('eu', gettext_noop('Basque')),
+    ('fa', gettext_noop('Persian')),
     ('fi', gettext_noop('Finnish')),
     ('fr', gettext_noop('French')),
+    ('ga', gettext_noop('Irish')),
     ('gl', gettext_noop('Galician')),
     ('hu', gettext_noop('Hungarian')),
     ('he', gettext_noop('Hebrew')),
+    ('hr', gettext_noop('Croatian')),
     ('is', gettext_noop('Icelandic')),
     ('it', gettext_noop('Italian')),
     ('ja', gettext_noop('Japanese')),
+    ('ka', gettext_noop('Georgian')),
+    ('ko', gettext_noop('Korean')),
+    ('km', gettext_noop('Khmer')),
     ('kn', gettext_noop('Kannada')),
     ('lv', gettext_noop('Latvian')),
+    ('lt', gettext_noop('Lithuanian')),
     ('mk', gettext_noop('Macedonian')),
     ('nl', gettext_noop('Dutch')),
     ('no', gettext_noop('Norwegian')),
     ('pl', gettext_noop('Polish')),
     ('pt', gettext_noop('Portugese')),
-    ('pt-br', gettext_noop('Brazilian')),
+    ('pt-br', gettext_noop('Brazilian Portuguese')),
     ('ro', gettext_noop('Romanian')),
     ('ru', gettext_noop('Russian')),
     ('sk', gettext_noop('Slovak')),
@@ -78,11 +93,13 @@ LANGUAGES = (
 )
 
 # Languages using BiDi (right-to-left) layout
-LANGUAGES_BIDI = ("he", "ar")
+LANGUAGES_BIDI = ("he", "ar", "fa")
 
 # If you set this to False, Django will make some optimizations so as not
 # to load the internationalization machinery.
 USE_I18N = True
+LOCALE_PATHS = ()
+LANGUAGE_COOKIE_NAME = 'django_language'
 
 # Not-necessarily-technical managers of the site. They get broken link
 # notifications and other various e-mails.
@@ -94,6 +111,9 @@ MANAGERS = ADMINS
 DEFAULT_CONTENT_TYPE = 'text/html'
 DEFAULT_CHARSET = 'utf-8'
 
+# Encoding of files read from disk (template and initial SQL files).
+FILE_CHARSET = 'utf-8'
+
 # E-mail address that error messages come from.
 SERVER_EMAIL = 'root@localhost'
 
@@ -101,7 +121,7 @@ SERVER_EMAIL = 'root@localhost'
 SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
-DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
+DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
 DATABASE_NAME = ''             # Or path to database file if using sqlite3.
 DATABASE_USER = ''             # Not used with sqlite3.
 DATABASE_PASSWORD = ''         # Not used with sqlite3.
@@ -118,6 +138,7 @@ EMAIL_PORT = 25
 # Optional SMTP authentication information for EMAIL_HOST.
 EMAIL_HOST_USER = ''
 EMAIL_HOST_PASSWORD = ''
+EMAIL_USE_TLS = False
 
 # List of strings representing installed apps.
 INSTALLED_APPS = ()
@@ -141,6 +162,7 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     'django.core.context_processors.auth',
     'django.core.context_processors.debug',
     'django.core.context_processors.i18n',
+    'django.core.context_processors.media',
 #    'django.core.context_processors.request',
 )
 
@@ -165,6 +187,9 @@ APPEND_SLASH = True
 
 # Whether to prepend the "www." subdomain to URLs that don't have it.
 PREPEND_WWW = False
+
+# Override the server-derived value of SCRIPT_NAME
+FORCE_SCRIPT_NAME = None
 
 # List of compiled regular expression objects representing User-Agent strings
 # that are not allowed to visit any page, systemwide. Use this for bad
@@ -209,6 +234,21 @@ MEDIA_ROOT = ''
 # Example: "http://media.lawrence.com"
 MEDIA_URL = ''
 
+# List of upload handler classes to be applied in order.
+FILE_UPLOAD_HANDLERS = (
+    'django.core.files.uploadhandler.MemoryFileUploadHandler',
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+)
+
+# Maximum size, in bytes, of a request before it will be streamed to the
+# file system instead of into memory.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2621440 # i.e. 2.5 MB
+
+# Directory in which upload streamed files will be temporarily saved. A value of
+# `None` will make Django use the operating system's default temporary directory
+# (i.e. "/tmp" on *nix systems).
+FILE_UPLOAD_TEMP_DIR = None
+
 # Default formatting for date objects. See all available format strings here:
 # http://www.djangoproject.com/documentation/templates/#now
 DATE_FORMAT = 'N j, Y'
@@ -237,7 +277,12 @@ TRANSACTIONS_MANAGED = False
 
 # The User-Agent string to use when checking for URL validity through the
 # isExistingURL validator.
-URL_VALIDATOR_USER_AGENT = "Django/0.96.2 (http://www.djangoproject.com)"
+from django import get_version
+URL_VALIDATOR_USER_AGENT = "Django/%s (http://www.djangoproject.com)" % get_version()
+
+# The tablespaces to use for each model when not specified otherwise.
+DEFAULT_TABLESPACE = ''
+DEFAULT_INDEX_TABLESPACE = ''
 
 ##############
 # MIDDLEWARE #
@@ -259,12 +304,15 @@ MIDDLEWARE_CLASSES = (
 # SESSIONS #
 ############
 
-SESSION_COOKIE_NAME = 'sessionid'         # Cookie name. This can be whatever you want.
-SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2 # Age of cookie, in seconds (default: 2 weeks).
-SESSION_COOKIE_DOMAIN = None              # A string like ".lawrence.com", or None for standard domain cookie.
-SESSION_COOKIE_SECURE = False             # Whether the session cookie should be secure (https:// only).
-SESSION_SAVE_EVERY_REQUEST = False        # Whether to save the session data on every request.
-SESSION_EXPIRE_AT_BROWSER_CLOSE = False   # Whether sessions expire when a user closes his browser.
+SESSION_COOKIE_NAME = 'sessionid'                       # Cookie name. This can be whatever you want.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2               # Age of cookie, in seconds (default: 2 weeks).
+SESSION_COOKIE_DOMAIN = None                            # A string like ".lawrence.com", or None for standard domain cookie.
+SESSION_COOKIE_SECURE = False                           # Whether the session cookie should be secure (https:// only).
+SESSION_COOKIE_PATH = '/'                               # The path of the session cookie.
+SESSION_SAVE_EVERY_REQUEST = False                      # Whether to save the session data on every request.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False                 # Whether a user's session cookie expires when the Web browser is closed.
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # The module to store session data
+SESSION_FILE_PATH = None                                # Directory to store session files if using the file session module. If None, the backend will use a sensible default.
 
 #########
 # CACHE #
@@ -272,8 +320,9 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False   # Whether sessions expire when a user 
 
 # The cache backend to use.  See the docstring in django.core.cache for the
 # possible values.
-CACHE_BACKEND = 'simple://'
+CACHE_BACKEND = 'locmem://'
 CACHE_MIDDLEWARE_KEY_PREFIX = ''
+CACHE_MIDDLEWARE_SECONDS = 600
 
 ####################
 # COMMENTS         #
@@ -311,6 +360,12 @@ BANNED_IPS = ()
 
 AUTHENTICATION_BACKENDS = ('django.contrib.auth.backends.ModelBackend',)
 
+LOGIN_URL = '/accounts/login/'
+
+LOGOUT_URL = '/accounts/logout/'
+
+LOGIN_REDIRECT_URL = '/accounts/profile/'
+
 ###########
 # TESTING #
 ###########
@@ -321,6 +376,13 @@ TEST_RUNNER = 'django.test.simple.run_tests'
 # The name of the database to use for testing purposes.
 # If None, a name of 'test_' + DATABASE_NAME will be assumed
 TEST_DATABASE_NAME = None
+
+# Strings used to set the character set and collation order for the test
+# database. These values are passed literally to the server, so they are
+# backend-dependent. If None, no special settings are sent (system defaults are
+# used).
+TEST_DATABASE_CHARSET = None
+TEST_DATABASE_COLLATION = None
 
 ############
 # FIXTURES #
