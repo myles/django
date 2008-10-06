@@ -87,15 +87,15 @@ class ModelBase(type):
                 # Things without _meta aren't functional models, so they're
                 # uninteresting parents.
                 continue
-                
+
             # All the fields of any type declared on this model
             new_fields = new_class._meta.local_fields + \
-                         new_class._meta.many_to_many + \
+                         new_class._meta.local_many_to_many + \
                          new_class._meta.virtual_fields
             field_names = set([f.name for f in new_fields])
-                
-            # Concrete classes...
+
             if not base._meta.abstract:
+                # Concrete classes...
                 if base in o2o_map:
                     field = o2o_map[base]
                     field.primary_key = True
@@ -106,10 +106,12 @@ class ModelBase(type):
                             auto_created=True, parent_link=True)
                     new_class.add_to_class(attr_name, field)
                 new_class._meta.parents[base] = field
-            
-            # .. and abstract ones.
+
             else:
-                # Check for clashes between locally declared fields and those on the ABC.
+                # .. and abstract ones.
+
+                # Check for clashes between locally declared fields and those
+                # on the ABC.
                 parent_fields = base._meta.local_fields + base._meta.local_many_to_many
                 for field in parent_fields:
                     if field.name in field_names:
@@ -119,6 +121,9 @@ class ModelBase(type):
                                             (field.name, name, base.__name__))
                     new_class.add_to_class(field.name, copy.deepcopy(field))
 
+                # Pass any non-abstract parent classes onto child.
+                new_class._meta.parents.update(base._meta.parents)
+
             # Inherit managers from the abstract base classes.
             base_managers = base._meta.abstract_managers
             base_managers.sort()
@@ -127,7 +132,7 @@ class ModelBase(type):
                 if not val or val is manager:
                     new_manager = manager._copy_to_model(new_class)
                     new_class.add_to_class(mgr_name, new_manager)
-        
+
             # Inherit virtual fields (like GenericForeignKey) from the parent class
             for field in base._meta.virtual_fields:
                 if base._meta.abstract and field.name in field_names:
@@ -136,7 +141,7 @@ class ModelBase(type):
                                      'abstract base class %r' % \
                                         (field.name, name, base.__name__))
                 new_class.add_to_class(field.name, copy.deepcopy(field))
-        
+
         if abstract:
             # Abstract base models can't be instantiated and don't appear in
             # the list of models for an app. We do the final setup for them a
