@@ -326,9 +326,12 @@ class QuerySet(object):
                 params = dict([(k, v) for k, v in kwargs.items() if '__' not in k])
                 params.update(defaults)
                 obj = self.model(**params)
+                sid = transaction.savepoint()
                 obj.save()
+                transaction.savepoint_commit(sid)
                 return obj, True
             except IntegrityError, e:
+                transaction.savepoint_rollback(sid)
                 return self.get(**kwargs), False
 
     def latest(self, field_name=None):
@@ -399,9 +402,10 @@ class QuerySet(object):
                 "Cannot update a query once a slice has been taken."
         query = self.query.clone(sql.UpdateQuery)
         query.add_update_values(kwargs)
-        query.execute_sql(None)
+        rows = query.execute_sql(None)
         transaction.commit_unless_managed()
         self._result_cache = None
+        return rows
     update.alters_data = True
 
     def _update(self, values):
@@ -415,8 +419,8 @@ class QuerySet(object):
                 "Cannot update a query once a slice has been taken."
         query = self.query.clone(sql.UpdateQuery)
         query.add_update_fields(values)
-        query.execute_sql(None)
         self._result_cache = None
+        return query.execute_sql(None)
     _update.alters_data = True
 
     ##################################################
@@ -685,7 +689,7 @@ class ValuesListQuerySet(ValuesQuerySet):
                 yield row[0]
         elif not self.query.extra_select:
             for row in self.query.results_iter():
-                yield row
+                yield tuple(row)
         else:
             # When extra(select=...) is involved, the extra cols come are
             # always at the start of the row, so we need to reorder the fields

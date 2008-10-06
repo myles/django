@@ -7,7 +7,7 @@ try:
 except ImportError:
     from django.utils import _decimal as decimal    # for Python 2.3
 
-from django.db import connection, get_creation_module
+from django.db import connection
 from django.db.models import signals
 from django.db.models.query_utils import QueryWrapper
 from django.dispatch import dispatcher
@@ -145,43 +145,20 @@ class Field(object):
         # as the TextField Django field type, which means XMLField's
         # get_internal_type() returns 'TextField'.
         #
-        # But the limitation of the get_internal_type() / DATA_TYPES approach
+        # But the limitation of the get_internal_type() / data_types approach
         # is that it cannot handle database column types that aren't already
         # mapped to one of the built-in Django field types. In this case, you
         # can implement db_type() instead of get_internal_type() to specify
         # exactly which wacky database column type you want to use.
         data = DictWrapper(self.__dict__, connection.ops.quote_name, "qn_")
         try:
-            return get_creation_module().DATA_TYPES[self.get_internal_type()] % data
+            return connection.creation.data_types[self.get_internal_type()] % data
         except KeyError:
             return None
 
     def unique(self):
         return self._unique or self.primary_key
     unique = property(unique)
-
-    def validate_full(self, field_data, all_data):
-        """
-        Returns a list of errors for this field. This is the main interface,
-        as it encapsulates some basic validation logic used by all fields.
-        Subclasses should implement validate(), not validate_full().
-        """
-        if not self.blank and not field_data:
-            return [_('This field is required.')]
-        try:
-            self.validate(field_data, all_data)
-        except validators.ValidationError, e:
-            return e.messages
-        return []
-
-    def validate(self, field_data, all_data):
-        """
-        Raises validators.ValidationError if field_data has any errors.
-        Subclasses should override this to specify field-specific validation
-        logic. This method should assume field_data has already been converted
-        into the appropriate data type by Field.to_python().
-        """
-        pass
 
     def set_attributes_from_name(self, name):
         self.name = name
@@ -750,9 +727,6 @@ class EmailField(CharField):
     def get_manipulator_field_objs(self):
         return [oldforms.EmailField]
 
-    def validate(self, field_data, all_data):
-        validators.isValidEmail(field_data, all_data)
-
     def formfield(self, **kwargs):
         defaults = {'form_class': forms.EmailField}
         defaults.update(kwargs)
@@ -829,9 +803,6 @@ class IPAddressField(Field):
     def get_internal_type(self):
         return "IPAddressField"
 
-    def validate(self, field_data, all_data):
-        validators.isValidIPAddress4(field_data, None)
-
     def formfield(self, **kwargs):
         defaults = {'form_class': forms.IPAddressField}
         defaults.update(kwargs)
@@ -876,9 +847,6 @@ class PhoneNumberField(Field):
 
     def get_internal_type(self):
         return "PhoneNumberField"
-
-    def validate(self, field_data, all_data):
-        validators.isValidPhone(field_data, all_data)
 
     def formfield(self, **kwargs):
         from django.contrib.localflavor.us.forms import USPhoneNumberField

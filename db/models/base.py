@@ -3,7 +3,6 @@ import types
 import sys
 import os
 from itertools import izip
-from warnings import warn
 try:
     set
 except NameError:
@@ -17,7 +16,7 @@ from django.db.models.fields import AutoField
 from django.db.models.fields.related import OneToOneRel, ManyToOneRel, OneToOneField
 from django.db.models.query import delete_objects, Q, CollectedObjects
 from django.db.models.options import Options
-from django.db import connection, transaction
+from django.db import connection, transaction, DatabaseError
 from django.db.models import signals
 from django.db.models.loading import register_models, get_model
 from django.utils.functional import curry
@@ -268,22 +267,31 @@ class Model(object):
 
     pk = property(_get_pk_val, _set_pk_val)
 
-    def save(self):
+    def save(self, force_insert=False, force_update=False):
         """
         Saves the current instance. Override this in a subclass if you want to
         control the saving process.
+
+        The 'force_insert' and 'force_update' parameters can be used to insist
+        that the "save" must be an SQL insert or update (or equivalent for
+        non-SQL backends), respectively. Normally, they should not be set.
         """
-        self.save_base()
+        if force_insert and force_update:
+            raise ValueError("Cannot force both insert and updating in "
+                    "model saving.")
+        self.save_base(force_insert=force_insert, force_update=force_update)
 
     save.alters_data = True
 
-    def save_base(self, raw=False, cls=None):
+    def save_base(self, raw=False, cls=None, force_insert=False,
+            force_update=False):
         """
         Does the heavy-lifting involved in saving. Subclasses shouldn't need to
         override this method. It's separate from save() in order to hide the
         need for overrides of save() to pass around internal-only parameters
         ('raw' and 'cls').
         """
+        assert not (force_insert and force_update)
         if not cls:
             cls = self.__class__
             meta = self._meta
@@ -319,15 +327,20 @@ class Model(object):
         manager = cls._default_manager
         if pk_set:
             # Determine whether a record with the primary key already exists.
-            if manager.filter(pk=pk_val).extra(select={'a': 1}).values('a').order_by():
+            if (force_update or (not force_insert and
+                    manager.filter(pk=pk_val).extra(select={'a': 1}).values('a').order_by())):
                 # It does already exist, so do an UPDATE.
-                if non_pks:
+                if force_update or non_pks:
                     values = [(f, None, f.get_db_prep_save(raw and getattr(self, f.attname) or f.pre_save(self, False))) for f in non_pks]
-                    manager.filter(pk=pk_val)._update(values)
+                    rows = manager.filter(pk=pk_val)._update(values)
+                    if force_update and not rows:
+                        raise DatabaseError("Forced update did not affect any rows.")
             else:
                 record_exists = False
         if not pk_set or not record_exists:
             if not pk_set:
+                if force_update:
+                    raise ValueError("Cannot force an update in save() with no primary key.")
                 values = [(f, f.get_db_prep_save(raw and getattr(self, f.attname) or f.pre_save(self, True))) for f in meta.local_fields if not isinstance(f, AutoField)]
             else:
                 values = [(f, f.get_db_prep_save(raw and getattr(self, f.attname) or f.pre_save(self, True))) for f in meta.local_fields]
@@ -354,28 +367,6 @@ class Model(object):
                 created=(not record_exists), raw=raw)
 
     save_base.alters_data = True
-
-    def validate(self):
-        """
-        First coerces all fields on this instance to their proper Python types.
-        Then runs validation on every field. Returns a dictionary of
-        field_name -> error_list.
-        """
-        error_dict = {}
-        invalid_python = {}
-        for f in self._meta.fields:
-            try:
-                setattr(self, f.attname, f.to_python(getattr(self, f.attname, f.get_default())))
-            except validators.ValidationError, e:
-                error_dict[f.name] = e.messages
-                invalid_python[f.name] = 1
-        for f in self._meta.fields:
-            if f.name in invalid_python:
-                continue
-            errors = f.validate_full(getattr(self, f.attname, f.get_default()), self.__dict__)
-            if errors:
-                error_dict[f.name] = errors
-        return error_dict
 
     def _collect_sub_objects(self, seen_objs, parent=None, nullable=False):
         """
@@ -463,43 +454,6 @@ class Model(object):
             setattr(self, cachename, obj)
         return getattr(self, cachename)
 
-    def _get_FIELD_filename(self, field):
-        warn("instance.get_%s_filename() is deprecated. Use instance.%s.path instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        try:
-            return getattr(self, field.attname).path
-        except ValueError:
-            return ''
-
-    def _get_FIELD_url(self, field):
-        warn("instance.get_%s_url() is deprecated. Use instance.%s.url instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        try:
-            return getattr(self, field.attname).url
-        except ValueError:
-            return ''
-
-    def _get_FIELD_size(self, field):
-        warn("instance.get_%s_size() is deprecated. Use instance.%s.size instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        return getattr(self, field.attname).size
-
-    def _save_FIELD_file(self, field, filename, content, save=True):
-        warn("instance.save_%s_file() is deprecated. Use instance.%s.save() instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        return getattr(self, field.attname).save(filename, content, save)
-
-    _save_FIELD_file.alters_data = True
-
-    def _get_FIELD_width(self, field):
-        warn("instance.get_%s_width() is deprecated. Use instance.%s.width instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        return getattr(self, field.attname).width()
-
-    def _get_FIELD_height(self, field):
-        warn("instance.get_%s_height() is deprecated. Use instance.%s.height instead." % \
-            (field.attname, field.attname), DeprecationWarning, stacklevel=3)
-        return getattr(self, field.attname).height()
 
 
 ############################################
