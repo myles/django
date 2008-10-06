@@ -1,8 +1,7 @@
-from django.core.template import Node, NodeList, Template, Context, resolve_variable
-from django.core.template import TemplateSyntaxError, TokenParser, Library
-from django.core.template import TOKEN_BLOCK, TOKEN_TEXT, TOKEN_VAR
+from django.template import Node, resolve_variable
+from django.template import TemplateSyntaxError, TokenParser, Library
+from django.template import TOKEN_TEXT, TOKEN_VAR
 from django.utils import translation
-import re, sys
 
 register = Library()
 
@@ -11,8 +10,8 @@ class GetAvailableLanguagesNode(Node):
         self.variable = variable
 
     def render(self, context):
-        from django.conf.settings import LANGUAGES
-        context[self.variable] = LANGUAGES
+        from django.conf import settings
+        context[self.variable] = [(k, translation.gettext(v)) for k, v in settings.LANGUAGES]
         return ''
 
 class GetCurrentLanguageNode(Node):
@@ -21,6 +20,14 @@ class GetCurrentLanguageNode(Node):
 
     def render(self, context):
         context[self.variable] = translation.get_language()
+        return ''
+
+class GetCurrentLanguageBidiNode(Node):
+    def __init__(self, variable):
+        self.variable = variable
+
+    def render(self, context):
+        context[self.variable] = translation.get_language_bidi()
         return ''
 
 class TranslateNode(Node):
@@ -102,8 +109,25 @@ def do_get_current_language(parser, token):
     """
     args = token.contents.split()
     if len(args) != 3 or args[1] != 'as':
-        raise TemplateSyntaxError, "'get_available_languages' requires 'as variable' (got %r)" % args
+        raise TemplateSyntaxError, "'get_current_language' requires 'as variable' (got %r)" % args
     return GetCurrentLanguageNode(args[2])
+
+def do_get_current_language_bidi(parser, token):
+    """
+    This will store the current language layout in the context.
+
+    Usage::
+
+        {% get_current_language_bidi as bidi %}
+
+    This will fetch the currently active language's layout and
+    put it's value into the ``bidi`` context variable.
+    True indicates right-to-left layout, otherwise left-to-right
+    """
+    args = token.contents.split()
+    if len(args) != 3 or args[1] != 'as':
+        raise TemplateSyntaxError, "'get_current_language_bidi' requires 'as variable' (got %r)" % args
+    return GetCurrentLanguageBidiNode(args[2])
 
 def do_translate(parser, token):
     """
@@ -146,7 +170,7 @@ def do_translate(parser, token):
             else:
                 noop = False
             return (value, noop)
-    (value, noop) = TranslateParser(token.contents).top()
+    value, noop = TranslateParser(token.contents).top()
     return TranslateNode(value, noop)
 
 def do_block_translate(parser, token):
@@ -191,7 +215,7 @@ def do_block_translate(parser, token):
                     raise TemplateSyntaxError, "unknown subtag %s for 'blocktrans' found" % tag
             return (countervar, counter, extra_context)
 
-    (countervar, counter, extra_context) = BlockTranslateParser(token.contents).top()
+    countervar, counter, extra_context = BlockTranslateParser(token.contents).top()
 
     singular = []
     plural = []
@@ -203,7 +227,7 @@ def do_block_translate(parser, token):
             break
     if countervar and counter:
         if token.contents.strip() != 'plural':
-            raise TemplateSyntaxError, "'blocktrans' doesn't allow other block tags inside it" % tag
+            raise TemplateSyntaxError, "'blocktrans' doesn't allow other block tags inside it"
         while parser.tokens:
             token = parser.next_token()
             if token.token_type in (TOKEN_VAR, TOKEN_TEXT):
@@ -217,5 +241,6 @@ def do_block_translate(parser, token):
 
 register.tag('get_available_languages', do_get_available_languages)
 register.tag('get_current_language', do_get_current_language)
+register.tag('get_current_language_bidi', do_get_current_language_bidi)
 register.tag('trans', do_translate)
 register.tag('blocktrans', do_block_translate)

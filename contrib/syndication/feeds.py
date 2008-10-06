@@ -1,8 +1,8 @@
 from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist
-from django.core.template import Context, loader, Template, TemplateDoesNotExist
-from django.models.core import sites
+from django.template import Context, loader, Template, TemplateDoesNotExist
+from django.contrib.sites.models import Site
 from django.utils import feedgenerator
-from django.conf.settings import LANGUAGE_CODE, SETTINGS_MODULE
+from django.conf import settings
 
 def add_domain(domain, url):
     if not url.startswith('http://'):
@@ -12,14 +12,18 @@ def add_domain(domain, url):
 class FeedDoesNotExist(ObjectDoesNotExist):
     pass
 
-class Feed:
+class Feed(object):
     item_pubdate = None
     item_enclosure_url = None
     feed_type = feedgenerator.DefaultFeed
+    title_template = None
+    description_template = None
 
     def __init__(self, slug, feed_url):
         self.slug = slug
         self.feed_url = feed_url
+        self.title_template_name = self.title_template or ('feeds/%s_title.html' % slug)
+        self.description_template_name = self.description_template or ('feeds/%s_description.html' % slug)
 
     def item_link(self, item):
         try:
@@ -60,7 +64,7 @@ class Feed:
         else:
             obj = None
 
-        current_site = sites.get_current()
+        current_site = Site.objects.get_current()
         link = self.__get_dynamic_attr('link', obj)
         link = add_domain(current_site.domain, link)
 
@@ -68,21 +72,22 @@ class Feed:
             title = self.__get_dynamic_attr('title', obj),
             link = link,
             description = self.__get_dynamic_attr('description', obj),
-            language = LANGUAGE_CODE.decode(),
-            feed_url = add_domain(current_site, self.feed_url),
+            language = settings.LANGUAGE_CODE.decode(),
+            feed_url = add_domain(current_site, self.__get_dynamic_attr('feed_url', obj)),
             author_name = self.__get_dynamic_attr('author_name', obj),
             author_link = self.__get_dynamic_attr('author_link', obj),
             author_email = self.__get_dynamic_attr('author_email', obj),
+            categories = self.__get_dynamic_attr('categories', obj),
         )
 
         try:
-            title_template = loader.get_template('feeds/%s_title' % self.slug)
+            title_tmp = loader.get_template(self.title_template_name)
         except TemplateDoesNotExist:
-            title_template = Template('{{ obj }}')
+            title_tmp = Template('{{ obj }}')
         try:
-            description_template = loader.get_template('feeds/%s_description' % self.slug)
+            description_tmp = loader.get_template(self.description_template_name)
         except TemplateDoesNotExist:
-            description_template = Template('{{ obj }}')
+            description_tmp = Template('{{ obj }}')
 
         for item in self.__get_dynamic_attr('items', obj):
             link = add_domain(current_site.domain, self.__get_dynamic_attr('item_link', item))
@@ -101,14 +106,15 @@ class Feed:
             else:
                 author_email = author_link = None
             feed.add_item(
-                title = title_template.render(Context({'obj': item, 'site': current_site})).decode('utf-8'),
+                title = title_tmp.render(Context({'obj': item, 'site': current_site})).decode('utf-8'),
                 link = link,
-                description = description_template.render(Context({'obj': item, 'site': current_site})).decode('utf-8'),
+                description = description_tmp.render(Context({'obj': item, 'site': current_site})).decode('utf-8'),
                 unique_id = link,
                 enclosure = enc,
                 pubdate = self.__get_dynamic_attr('item_pubdate', item),
                 author_name = author_name,
                 author_email = author_email,
                 author_link = author_link,
+                categories = self.__get_dynamic_attr('item_categories', item),
             )
         return feed

@@ -1,10 +1,8 @@
 from django.conf import settings
-from django.core.template import Template, Context, TemplateDoesNotExist
+from django.template import Template, Context, TemplateDoesNotExist
 from django.utils.html import escape
-from django.utils.httpwrappers import HttpResponseServerError, HttpResponseNotFound
+from django.http import HttpResponseServerError, HttpResponseNotFound
 import os, re
-from itertools import count, izip
-from os.path import dirname, join as pathjoin
 
 HIDDEN_SETTINGS = re.compile('SECRET|PASSWORD')
 
@@ -72,7 +70,7 @@ def technical_500_response(request, exc_type, exc_value, tb):
     template_does_not_exist = False
     loader_debug_info = None
     if issubclass(exc_type, TemplateDoesNotExist):
-        from django.core.template.loader import template_source_loaders
+        from django.template.loader import template_source_loaders
         template_does_not_exist = True
         loader_debug_info = []
         for loader in template_source_loaders:
@@ -96,20 +94,27 @@ def technical_500_response(request, exc_type, exc_value, tb):
         function = tb.tb_frame.f_code.co_name
         lineno = tb.tb_lineno - 1
         pre_context_lineno, pre_context, context_line, post_context = _get_lines_from_file(filename, lineno, 7)
-        frames.append({
-            'tb': tb,
-            'filename': filename,
-            'function': function,
-            'lineno': lineno,
-            'vars': tb.tb_frame.f_locals.items(),
-            'id': id(tb),
-            'pre_context': pre_context,
-            'context_line': context_line,
-            'post_context': post_context,
-            'pre_context_lineno': pre_context_lineno,
-        })
+        if pre_context_lineno:
+            frames.append({
+                'tb': tb,
+                'filename': filename,
+                'function': function,
+                'lineno': lineno + 1,
+                'vars': tb.tb_frame.f_locals.items(),
+                'id': id(tb),
+                'pre_context': pre_context,
+                'context_line': context_line,
+                'post_context': post_context,
+                'pre_context_lineno': pre_context_lineno + 1,
+            })
         tb = tb.tb_next
 
+    if not frames:
+        frames = [{
+            'filename': '&lt;unknown&gt;',
+            'function': '?',
+            'lineno': '?',
+        }]
     t = Template(TECHNICAL_500_TEMPLATE)
     c = Context({
         'exception_type': exc_type.__name__,
@@ -117,7 +122,7 @@ def technical_500_response(request, exc_type, exc_value, tb):
         'frames': frames,
         'lastframe': frames[-1],
         'request': request,
-        'request_protocol': os.environ.get("HTTPS") == "on" and "https" or "http",
+        'request_protocol': request.is_secure() and "https" or "http",
         'settings': get_safe_settings(),
         'template_info': template_info,
         'template_does_not_exist': template_does_not_exist,
@@ -142,7 +147,7 @@ def technical_404_response(request, exception):
         'urlpatterns': tried,
         'reason': str(exception),
         'request': request,
-        'request_protocol': os.environ.get("HTTPS") == "on" and "https" or "http",
+        'request_protocol': request.is_secure() and "https" or "http",
         'settings': get_safe_settings(),
     })
     return HttpResponseNotFound(t.render(c), mimetype='text/html')
@@ -360,11 +365,11 @@ TECHNICAL_500_TEMPLATE = """
           {% if frame.context_line %}
             <div class="context" id="c{{ frame.id }}">
               {% if frame.pre_context %}
-                <ol start="{{ frame.pre_context_lineno|add:"1" }}" class="pre-context" id="pre{{ frame.id }}">{% for line in frame.pre_context %}<li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ line|escape }}</li>{% endfor %}</ol>
+                <ol start="{{ frame.pre_context_lineno }}" class="pre-context" id="pre{{ frame.id }}">{% for line in frame.pre_context %}<li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ line|escape }}</li>{% endfor %}</ol>
               {% endif %}
-              <ol start="{{ frame.lineno|add:"1" }}" class="context-line"><li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ frame.context_line|escape }} <span>...</span></li></ol>
+              <ol start="{{ frame.lineno }}" class="context-line"><li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ frame.context_line|escape }} <span>...</span></li></ol>
               {% if frame.post_context %}
-                <ol start='{{ frame.lineno|add:"2" }}' class="post-context" id="post{{ frame.id }}">{% for line in frame.post_context %}<li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ line|escape }}</li>{% endfor %}</ol>
+                <ol start='{{ frame.lineno|add:"1" }}' class="post-context" id="post{{ frame.id }}">{% for line in frame.post_context %}<li onclick="toggle('pre{{ frame.id }}', 'post{{ frame.id }}')">{{ line|escape }}</li>{% endfor %}</ol>
               {% endif %}
             </div>
           {% endif %}
@@ -404,7 +409,7 @@ Traceback (most recent call last):<br/>
 {% for frame in frames %}
   File "{{ frame.filename }}" in {{ frame.function }}<br/>
   {% if frame.context_line %}
-    &nbsp;&nbsp;{{ frame.lineno|add:"1" }}. {{ frame.context_line|escape }}<br/>
+    &nbsp;&nbsp;{{ frame.lineno }}. {{ frame.context_line|escape }}<br/>
   {% endif %}
 {% endfor %}<br/>
 &nbsp;&nbsp;{{ exception_type }} at {{ request.path }}<br/>
@@ -641,8 +646,8 @@ EMPTY_URLCONF_TEMPLATE = """
 <div id="instructions">
   <p>Of course, you haven't actually done any work yet. Here's what to do next:</p>
   <ul>
-    <li>Edit the <code>DATABASE_*</code> settings in <code>{{ project_name }}/settings.py</code>.</li>
-    <li>Start your first app by running <code>{{ project_name }}/manage.py startapp [appname]</code>.</li>
+    <li>If you plan to use a database, edit the <code>DATABASE_*</code> settings in <code>{{ project_name }}/settings.py</code>.</li>
+    <li>Start your first app by running <code>python {{ project_name }}/manage.py startapp [appname]</code>.</li>
   </ul>
 </div>
 

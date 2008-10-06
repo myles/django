@@ -14,7 +14,8 @@ In each case, if the required library is not installed, the filter will
 silently fail and return the un-marked-up text.
 """
 
-from django.core import template
+from django import template
+from django.conf import settings
 
 register = template.Library()
 
@@ -22,14 +23,18 @@ def textile(value):
     try:
         import textile
     except ImportError:
+        if settings.DEBUG:
+            raise template.TemplateSyntaxError, "Error in {% textile %} filter: The Python textile library isn't installed."
         return value
     else:
-        return textile.textile(value)
+        return textile.textile(value, encoding=settings.DEFAULT_CHARSET, output=settings.DEFAULT_CHARSET)
 
 def markdown(value):
     try:
         import markdown
     except ImportError:
+        if settings.DEBUG:
+            raise template.TemplateSyntaxError, "Error in {% markdown %} filter: The Python markdown library isn't installed."
         return value
     else:
         return markdown.markdown(value)
@@ -38,9 +43,12 @@ def restructuredtext(value):
     try:
         from docutils.core import publish_parts
     except ImportError:
+        if settings.DEBUG:
+            raise template.TemplateSyntaxError, "Error in {% restructuredtext %} filter: The Python docutils library isn't installed."
         return value
     else:
-        parts = publish_parts(source=value, writer_name="html4css1")
+        docutils_settings = getattr(settings, "RESTRUCTUREDTEXT_FILTER_SETTINGS", {})
+        parts = publish_parts(source=value, writer_name="html4css1", settings_overrides=docutils_settings)
         return parts["fragment"]
 
 register.filter(textile)

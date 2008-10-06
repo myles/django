@@ -7,10 +7,14 @@ a string) and returns a tuple in this format:
     (view_function, function_args, function_kwargs)
 """
 
-from django.core.exceptions import Http404, ImproperlyConfigured, ViewDoesNotExist
+from django.http import Http404
+from django.core.exceptions import ImproperlyConfigured, ViewDoesNotExist
 import re
 
 class Resolver404(Http404):
+    pass
+
+class NoReverseMatch(Exception):
     pass
 
 def get_mod_func(callback):
@@ -19,7 +23,67 @@ def get_mod_func(callback):
     dot = callback.rindex('.')
     return callback[:dot], callback[dot+1:]
 
-class RegexURLPattern:
+def reverse_helper(regex, *args, **kwargs):
+    """
+    Does a "reverse" lookup -- returns the URL for the given args/kwargs.
+    The args/kwargs are applied to the given compiled regular expression.
+    For example:
+
+        >>> reverse_helper(re.compile('^places/(\d+)/$'), 3)
+        'places/3/'
+        >>> reverse_helper(re.compile('^places/(?P<id>\d+)/$'), id=3)
+        'places/3/'
+        >>> reverse_helper(re.compile('^people/(?P<state>\w\w)/(\w+)/$'), 'adrian', state='il')
+        'people/il/adrian/'
+
+    Raises NoReverseMatch if the args/kwargs aren't valid for the regex.
+    """
+    # TODO: Handle nested parenthesis in the following regex.
+    result = re.sub(r'\(([^)]+)\)', MatchChecker(args, kwargs), regex.pattern)
+    return result.replace('^', '').replace('$', '')
+
+class MatchChecker(object):
+    "Class used in reverse RegexURLPattern lookup."
+    def __init__(self, args, kwargs):
+        self.args, self.kwargs = args, kwargs
+        self.current_arg = 0
+
+    def __call__(self, match_obj):
+        # match_obj.group(1) is the contents of the parenthesis.
+        # First we need to figure out whether it's a named or unnamed group.
+        #
+        grouped = match_obj.group(1)
+        m = re.search(r'^\?P<(\w+)>(.*?)$', grouped)
+        if m: # If this was a named group...
+            # m.group(1) is the name of the group
+            # m.group(2) is the regex.
+            try:
+                value = self.kwargs[m.group(1)]
+            except KeyError:
+                # It was a named group, but the arg was passed in as a
+                # positional arg or not at all.
+                try:
+                    value = self.args[self.current_arg]
+                    self.current_arg += 1
+                except IndexError:
+                    # The arg wasn't passed in.
+                    raise NoReverseMatch('Not enough positional arguments passed in')
+            test_regex = m.group(2)
+        else: # Otherwise, this was a positional (unnamed) group.
+            try:
+                value = self.args[self.current_arg]
+                self.current_arg += 1
+            except IndexError:
+                # The arg wasn't passed in.
+                raise NoReverseMatch('Not enough positional arguments passed in')
+            test_regex = grouped
+        # Note we're using re.match here on purpose because the start of
+        # to string needs to match.
+        if not re.match(test_regex + '$', str(value)): # TODO: Unicode?
+            raise NoReverseMatch("Value %r didn't match regular expression %r" % (value, test_regex))
+        return str(value) # TODO: Unicode?
+
+class RegexURLPattern(object):
     def __init__(self, regex, callback, default_args=None):
         # regex is a string representing a regular expression.
         # callback is something like 'foo.views.news.stories.story_detail',
@@ -57,12 +121,21 @@ class RegexURLPattern:
         except AttributeError, e:
             raise ViewDoesNotExist, "Tried %s in module %s. Error was: %s" % (func_name, mod_name, str(e))
 
+    def reverse(self, viewname, *args, **kwargs):
+        if viewname != self.callback:
+            raise NoReverseMatch
+        return self.reverse_helper(*args, **kwargs)
+
+    def reverse_helper(self, *args, **kwargs):
+        return reverse_helper(self.regex, *args, **kwargs)
+
 class RegexURLResolver(object):
     def __init__(self, regex, urlconf_name):
         # regex is a string representing a regular expression.
         # urlconf_name is a string representing the module containing urlconfs.
         self.regex = re.compile(regex)
         self.urlconf_name = urlconf_name
+        self.callback = None
 
     def resolve(self, path):
         tried = []
@@ -109,3 +182,38 @@ class RegexURLResolver(object):
 
     def resolve500(self):
         return self._resolve_special('500')
+
+    def reverse(self, viewname, *args, **kwargs):
+        for pattern in self.urlconf_module.urlpatterns:
+            if isinstance(pattern, RegexURLResolver):
+                try:
+                    return pattern.reverse_helper(viewname, *args, **kwargs)
+                except NoReverseMatch:
+                    continue
+            elif pattern.callback == viewname:
+                try:
+                    return pattern.reverse_helper(*args, **kwargs)
+                except NoReverseMatch:
+                    continue
+        raise NoReverseMatch
+
+    def reverse_helper(self, viewname, *args, **kwargs):
+        sub_match = self.reverse(viewname, *args, **kwargs)
+        result = reverse_helper(self.regex, *args, **kwargs)
+        return result + sub_match
+
+def resolve(path, urlconf=None):
+    if urlconf is None:
+        from django.conf import settings
+        urlconf = settings.ROOT_URLCONF
+    resolver = RegexURLResolver(r'^/', urlconf)
+    return resolver.resolve(path)
+
+def reverse(viewname, urlconf=None, args=None, kwargs=None):
+    args = args or []
+    kwargs = kwargs or {}
+    if urlconf is None:
+        from django.conf import settings
+        urlconf = settings.ROOT_URLCONF
+    resolver = RegexURLResolver(r'^/', urlconf)
+    return '/' + resolver.reverse(viewname, *args, **kwargs)

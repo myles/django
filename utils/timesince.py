@@ -11,6 +11,7 @@ def timesince(d, now=None):
     chunks = (
       (60 * 60 * 24 * 365, lambda n: ngettext('year', 'years', n)),
       (60 * 60 * 24 * 30, lambda n: ngettext('month', 'months', n)),
+      (60 * 60 * 24 * 7, lambda n : ngettext('week', 'weeks', n)),
       (60 * 60 * 24, lambda n : ngettext('day', 'days', n)),
       (60 * 60, lambda n: ngettext('hour', 'hours', n)),
       (60, lambda n: ngettext('minute', 'minutes', n))
@@ -23,7 +24,7 @@ def timesince(d, now=None):
     else:
         t = time.localtime()
     if d.tzinfo:
-        tz = LocalTimezone()
+        tz = LocalTimezone(d)
     else:
         tz = None
     now = datetime.datetime(t[0], t[1], t[2], t[3], t[4], t[5], tzinfo=tz)
@@ -46,10 +47,11 @@ def timesince(d, now=None):
             s += ', %d %s' % (count2, name2(count2))
     return s
 
-def timeuntil(d):
+def timeuntil(d, now=None):
     """
     Like timesince, but returns a string measuring the time until
     the given time.
     """
-    now = datetime.datetime.now()
+    if now == None:
+        now = datetime.datetime.now()
     return timesince(now, d)

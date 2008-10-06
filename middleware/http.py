@@ -1,6 +1,6 @@
 import datetime
 
-class ConditionalGetMiddleware:
+class ConditionalGetMiddleware(object):
     """
     Handles conditional GET operations. If the response has a ETag or
     Last-Modified header, and the request has If-None-Match or
@@ -31,7 +31,7 @@ class ConditionalGetMiddleware:
                 response.content = ''
                 response['Content-Length'] = '0'
 
-        if request.META['REQUEST_METHOD'] == 'HEAD':
+        if request.method == 'HEAD':
             response.content = ''
 
         return response

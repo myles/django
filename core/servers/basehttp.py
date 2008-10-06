@@ -8,7 +8,7 @@ been reviewed for security issues. Don't use it for production use.
 """
 
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-from types import ListType, StringType, TupleType
+from types import ListType, StringType
 import os, re, sys, time, urllib
 
 __version__ = "0.1"
@@ -21,7 +21,7 @@ software_version = server_version + ' ' + sys_version
 class WSGIServerException(Exception):
     pass
 
-class FileWrapper:
+class FileWrapper(object):
     """Wrapper to convert file-like objects to iterables"""
 
     def __init__(self, filelike, blksize=8192):
@@ -63,7 +63,7 @@ def _formatparam(param, value=None, quote=1):
     else:
         return param
 
-class Headers:
+class Headers(object):
     """Manage a collection of HTTP response headers"""
     def __init__(self,headers):
         if type(headers) is not ListType:
@@ -218,7 +218,7 @@ def is_hop_by_hop(header_name):
     """Return true if 'header_name' is an HTTP/1.1 "Hop-by-Hop" header"""
     return _hoppish(header_name.lower())
 
-class ServerHandler:
+class ServerHandler(object):
     """Manage the invocation of a WSGI application"""
 
     # Configuration parameters; can override per-subclass or per-instance
@@ -242,7 +242,7 @@ class ServerHandler:
 
     # Error handling (also per-subclass or per-instance)
     traceback_limit = None  # Print entire traceback to self.get_stderr()
-    error_status = "500 Dude, this is whack!"
+    error_status = "500 INTERNAL SERVER ERROR"
     error_headers = [('Content-Type','text/plain')]
 
     # State variables (don't mess with these)
@@ -383,7 +383,7 @@ class ServerHandler:
         assert type(data) is StringType,"write() argument must be string"
 
         if not self.status:
-             raise AssertionError("write() before start_response()")
+            raise AssertionError("write() before start_response()")
 
         elif not self.headers_sent:
             # Before the first output, send the stored headers
@@ -532,8 +532,8 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
     server_version = "WSGIServer/" + __version__
 
     def __init__(self, *args, **kwargs):
-        from django.conf.settings import ADMIN_MEDIA_PREFIX
-        self.admin_media_prefix = ADMIN_MEDIA_PREFIX
+        from django.conf import settings
+        self.admin_media_prefix = settings.ADMIN_MEDIA_PREFIX
         BaseHTTPRequestHandler.__init__(self, *args, **kwargs)
 
     def get_environ(self):
@@ -591,7 +591,7 @@ class WSGIRequestHandler(BaseHTTPRequestHandler):
             return
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), format % args))
 
-class AdminMediaHandler:
+class AdminMediaHandler(object):
     """
     WSGI middleware that intercepts calls to the admin media directory, as
     defined by the ADMIN_MEDIA_PREFIX setting, and serves those images.

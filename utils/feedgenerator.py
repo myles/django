@@ -21,8 +21,6 @@ http://diveintomark.org/archives/2004/02/04/incompatible-rss
 from django.utils.xmlutils import SimplerXMLGenerator
 import datetime, re, time
 import email.Utils
-from xml.dom import minidom
-from xml.parsers.expat import ExpatError
 
 def rfc2822_date(date):
     return email.Utils.formatdate(time.mktime(date.timetuple()))
@@ -38,7 +36,7 @@ def get_tag_uri(url, date):
     tag = re.sub('#', '/', tag)
     return 'tag:' + tag
 
-class SyndicationFeed:
+class SyndicationFeed(object):
     "Base class for all syndication feeds. Subclasses should provide write()"
     def __init__(self, title, link, description, language=None, author_email=None,
             author_name=None, author_link=None, subtitle=None, categories=None,
@@ -110,7 +108,7 @@ class SyndicationFeed:
         else:
             return datetime.datetime.now()
 
-class Enclosure:
+class Enclosure(object):
     "Represents an RSS enclosure"
     def __init__(self, url, length, mime_type):
         "All args are expected to be Python Unicode objects"
@@ -128,6 +126,8 @@ class RssFeed(SyndicationFeed):
         handler.addQuickElement(u"description", self.feed['description'])
         if self.feed['language'] is not None:
             handler.addQuickElement(u"language", self.feed['language'])
+        for cat in self.feed['categories']:
+            handler.addQuickElement(u"category", cat)
         self.write_items(handler)
         self.endChannelElement(handler)
         handler.endElement(u"rss")
@@ -158,9 +158,11 @@ class Rss201rev2Feed(RssFeed):
                 handler.addQuickElement(u"description", item['description'])
 
             # Author information.
-            if item['author_email'] is not None and item['author_name'] is not None:
-                handler.addQuickElement(u"author", u"%s (%s)" % \
+            if item["author_name"] and item["author_email"]:
+                handler.addQuickElement(u"author", "%s (%s)" % \
                     (item['author_email'], item['author_name']))
+            elif item["author_email"]:
+                handler.addQuickElement(u"author", item["author_email"])
 
             if item['pubdate'] is not None:
                 handler.addQuickElement(u"pubDate", rfc2822_date(item['pubdate']).decode('ascii'))
@@ -217,7 +219,7 @@ class Atom1Feed(SyndicationFeed):
         for item in self.items:
             handler.startElement(u"entry", {})
             handler.addQuickElement(u"title", item['title'])
-            handler.addQuickElement(u"link", u"", {u"href": item['link']})
+            handler.addQuickElement(u"link", u"", {u"href": item['link'], u"rel": u"alternate"})
             if item['pubdate'] is not None:
                 handler.addQuickElement(u"updated", rfc3339_date(item['pubdate']).decode('ascii'))
 

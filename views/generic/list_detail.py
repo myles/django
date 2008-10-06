@@ -1,18 +1,17 @@
-from django import models
-from django.core.template import loader
-from django.utils.httpwrappers import HttpResponse
+from django.template import loader, RequestContext
+from django.http import Http404, HttpResponse
 from django.core.xheaders import populate_xheaders
-from django.core.extensions import DjangoContext
 from django.core.paginator import ObjectPaginator, InvalidPage
-from django.core.exceptions import Http404, ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist
 
-def object_list(request, app_label, module_name, paginate_by=None, allow_empty=False,
-        template_name=None, template_loader=loader, extra_lookup_kwargs={},
-        extra_context={}, context_processors=None, template_object_name='object'):
+def object_list(request, queryset, paginate_by=None, page=None,
+        allow_empty=False, template_name=None, template_loader=loader,
+        extra_context=None, context_processors=None, template_object_name='object',
+        mimetype=None):
     """
     Generic list of objects.
 
-    Templates: ``<app_label>/<module_name>_list``
+    Templates: ``<app_label>/<model_name>_list.html``
     Context:
         object_list
             list of objects
@@ -35,11 +34,12 @@ def object_list(request, app_label, module_name, paginate_by=None, allow_empty=F
         hits
             number of objects, total
     """
-    mod = models.get_module(app_label, module_name)
-    lookup_kwargs = extra_lookup_kwargs.copy()
+    if extra_context is None: extra_context = {}
+    queryset = queryset._clone()
     if paginate_by:
-        paginator = ObjectPaginator(mod, lookup_kwargs, paginate_by)
-        page = request.GET.get('page', 1)
+        paginator = ObjectPaginator(queryset, paginate_by)
+        if not page:
+            page = request.GET.get('page', 1)
         try:
             page = int(page)
             object_list = paginator.get_page(page - 1)
@@ -48,7 +48,7 @@ def object_list(request, app_label, module_name, paginate_by=None, allow_empty=F
                 object_list = []
             else:
                 raise Http404
-        c = DjangoContext(request, {
+        c = RequestContext(request, {
             '%s_list' % template_object_name: object_list,
             'is_paginated': paginator.pages > 1,
             'results_per_page': paginate_by,
@@ -61,12 +61,11 @@ def object_list(request, app_label, module_name, paginate_by=None, allow_empty=F
             'hits' : paginator.hits,
         }, context_processors)
     else:
-        object_list = mod.get_list(**lookup_kwargs)
-        c = DjangoContext(request, {
-            '%s_list' % template_object_name: object_list,
+        c = RequestContext(request, {
+            '%s_list' % template_object_name: queryset,
             'is_paginated': False
         }, context_processors)
-        if len(object_list) == 0 and not allow_empty:
+        if not allow_empty and len(queryset) == 0:
             raise Http404
     for key, value in extra_context.items():
         if callable(value):
@@ -74,50 +73,51 @@ def object_list(request, app_label, module_name, paginate_by=None, allow_empty=F
         else:
             c[key] = value
     if not template_name:
-        template_name = "%s/%s_list" % (app_label, module_name)
+        model = queryset.model
+        template_name = "%s/%s_list.html" % (model._meta.app_label, model._meta.object_name.lower())
     t = template_loader.get_template(template_name)
-    return HttpResponse(t.render(c))
+    return HttpResponse(t.render(c), mimetype=mimetype)
 
-def object_detail(request, app_label, module_name, object_id=None, slug=None,
+def object_detail(request, queryset, object_id=None, slug=None,
         slug_field=None, template_name=None, template_name_field=None,
-        template_loader=loader, extra_lookup_kwargs={}, extra_context={},
-        context_processors=None, template_object_name='object'):
+        template_loader=loader, extra_context=None,
+        context_processors=None, template_object_name='object',
+        mimetype=None):
     """
     Generic list of objects.
 
-    Templates: ``<app_label>/<module_name>_detail``
+    Templates: ``<app_label>/<model_name>_detail.html``
     Context:
         object
             the object
     """
-    mod = models.get_module(app_label, module_name)
-    lookup_kwargs = {}
+    if extra_context is None: extra_context = {}
+    model = queryset.model
     if object_id:
-        lookup_kwargs['pk'] = object_id
+        queryset = queryset.filter(pk=object_id)
     elif slug and slug_field:
-        lookup_kwargs['%s__exact' % slug_field] = slug
+        queryset = queryset.filter(**{slug_field: slug})
     else:
-        raise AttributeError("Generic detail view must be called with either an object_id or a slug/slug_field")
-    lookup_kwargs.update(extra_lookup_kwargs)
+        raise AttributeError, "Generic detail view must be called with either an object_id or a slug/slug_field."
     try:
-        object = mod.get_object(**lookup_kwargs)
+        obj = queryset.get()
     except ObjectDoesNotExist:
-        raise Http404("%s.%s does not exist for %s" % (app_label, module_name, lookup_kwargs))
+        raise Http404, "No %s found matching the query" % (model._meta.verbose_name)
     if not template_name:
-        template_name = "%s/%s_detail" % (app_label, module_name)
+        template_name = "%s/%s_detail.html" % (model._meta.app_label, model._meta.object_name.lower())
     if template_name_field:
-        template_name_list = [getattr(object, template_name_field), template_name]
+        template_name_list = [getattr(obj, template_name_field), template_name]
         t = template_loader.select_template(template_name_list)
     else:
         t = template_loader.get_template(template_name)
-    c = DjangoContext(request, {
-        template_object_name: object,
+    c = RequestContext(request, {
+        template_object_name: obj,
     }, context_processors)
     for key, value in extra_context.items():
         if callable(value):
             c[key] = value()
         else:
             c[key] = value
-    response = HttpResponse(t.render(c))
-    populate_xheaders(request, response, app_label, module_name, getattr(object, object._meta.pk.name))
+    response = HttpResponse(t.render(c), mimetype=mimetype)
+    populate_xheaders(request, response, model, getattr(obj, obj._meta.pk.name))
     return response

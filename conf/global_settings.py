@@ -1,7 +1,9 @@
 # Default Django settings. Override these with settings in the module
 # pointed-to by the DJANGO_SETTINGS_MODULE environment variable.
 
-from django.utils.translation import gettext_lazy as _
+# This is defined here as a do-nothing function because we can't import
+# django.utils.translation -- that module depends on the settings.
+gettext_noop = lambda s: s
 
 ####################
 # CORE             #
@@ -34,33 +36,44 @@ LANGUAGE_CODE = 'en-us'
 # Languages we provide translations for, out of the box. The language name
 # should be the utf-8 encoded local name for the language.
 LANGUAGES = (
-    ('bn', _('Bengali')),
-    ('cs', _('Czech')),
-    ('cy', _('Welsh')),
-    ('da', _('Danish')),
-    ('de', _('German')),
-    ('el', _('Greek')),
-    ('en', _('English')),
-    ('es', _('Spanish')),
-    ('fr', _('French')),
-    ('gl', _('Galician')),
-    ('he', _('Hebrew')),
-    ('is', _('Icelandic')),
-    ('it', _('Italian')),
-    ('ja', _('Japanese')),
-    ('nl', _('Dutch')),
-    ('no', _('Norwegian')),
-    ('pt-br', _('Brazilian')),
-    ('ro', _('Romanian')),
-    ('ru', _('Russian')),
-    ('sk', _('Slovak')),
-    ('sl', _('Slovenian')),
-    ('sr', _('Serbian')),
-    ('sv', _('Swedish')),
-    ('uk', _('Ukrainian')),
-    ('zh-cn', _('Simplified Chinese')),
-    ('zh-tw', _('Traditional Chinese')),
+    ('ar', gettext_noop('Arabic')),
+    ('bn', gettext_noop('Bengali')),
+    ('cs', gettext_noop('Czech')),
+    ('cy', gettext_noop('Welsh')),
+    ('da', gettext_noop('Danish')),
+    ('de', gettext_noop('German')),
+    ('el', gettext_noop('Greek')),
+    ('en', gettext_noop('English')),
+    ('es', gettext_noop('Spanish')),
+    ('es_AR', gettext_noop('Argentinean Spanish')),
+    ('fr', gettext_noop('French')),
+    ('gl', gettext_noop('Galician')),
+    ('hu', gettext_noop('Hungarian')),
+    ('he', gettext_noop('Hebrew')),
+    ('is', gettext_noop('Icelandic')),
+    ('it', gettext_noop('Italian')),
+    ('ja', gettext_noop('Japanese')),
+    ('nl', gettext_noop('Dutch')),
+    ('no', gettext_noop('Norwegian')),
+    ('pt-br', gettext_noop('Brazilian')),
+    ('ro', gettext_noop('Romanian')),
+    ('ru', gettext_noop('Russian')),
+    ('sk', gettext_noop('Slovak')),
+    ('sl', gettext_noop('Slovenian')),
+    ('sr', gettext_noop('Serbian')),
+    ('sv', gettext_noop('Swedish')),
+    ('ta', gettext_noop('Tamil')),
+    ('uk', gettext_noop('Ukrainian')),
+    ('zh-cn', gettext_noop('Simplified Chinese')),
+    ('zh-tw', gettext_noop('Traditional Chinese')),
 )
+
+# Languages using BiDi (right-to-left) layout
+LANGUAGES_BIDI = ("he", "ar")
+
+# If you set this to False, Django will make some optimizations so as not
+# to load the internationalization machinery.
+USE_I18N = True
 
 # Not-necessarily-technical managers of the site. They get broken link
 # notifications and other various e-mails.
@@ -79,7 +92,7 @@ SERVER_EMAIL = 'root@localhost'
 SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
-DATABASE_ENGINE = 'postgresql' # 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
+DATABASE_ENGINE = ''           # 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
 DATABASE_NAME = ''             # Or path to database file if using sqlite3.
 DATABASE_USER = ''             # Not used with sqlite3.
 DATABASE_PASSWORD = ''         # Not used with sqlite3.
@@ -102,19 +115,16 @@ INSTALLED_APPS = ()
 # List of locations of the template source files, in search order.
 TEMPLATE_DIRS = ()
 
-# Extension on all templates.
-TEMPLATE_FILE_EXTENSION = '.html'
-
 # List of callables that know how to import templates from various sources.
 # See the comments in django/core/template/loader.py for interface
 # documentation.
 TEMPLATE_LOADERS = (
-    'django.core.template.loaders.filesystem.load_template_source',
-    'django.core.template.loaders.app_directories.load_template_source',
-#     'django.core.template.loaders.eggs.load_template_source',
+    'django.template.loaders.filesystem.load_template_source',
+    'django.template.loaders.app_directories.load_template_source',
+#     'django.template.loaders.eggs.load_template_source',
 )
 
-# List of processors used by DjangoContext to populate the context.
+# List of processors used by RequestContext to populate the context.
 # Each one should be a callable that takes the request object as its
 # only parameter and returns a dictionary to add to the context.
 TEMPLATE_CONTEXT_PROCESSORS = (
@@ -201,9 +211,23 @@ DATETIME_FORMAT = 'N j, Y, P'
 # http://www.djangoproject.com/documentation/templates/#now
 TIME_FORMAT = 'P'
 
+# Default formatting for date objects when only the year and month are relevant.
+# See all available format strings here:
+# http://www.djangoproject.com/documentation/templates/#now
+YEAR_MONTH_FORMAT = 'F Y'
+
+# Default formatting for date objects when only the month and day are relevant.
+# See all available format strings here:
+# http://www.djangoproject.com/documentation/templates/#now
+MONTH_DAY_FORMAT = 'F j'
+
 # Whether to enable Psyco, which optimizes Python code. Requires Psyco.
 # http://psyco.sourceforge.net/
 ENABLE_PSYCO = False
+
+# Do you want to manage transactions manually?
+# Hint: you really don't!
+TRANSACTIONS_MANAGED = False
 
 ##############
 # MIDDLEWARE #
@@ -213,11 +237,12 @@ ENABLE_PSYCO = False
 # this middleware classes will be applied in the order given, and in the
 # response phase the middleware will be applied in reverse order.
 MIDDLEWARE_CLASSES = (
-    "django.middleware.sessions.SessionMiddleware",
-#     "django.middleware.http.ConditionalGetMiddleware",
-#     "django.middleware.gzip.GZipMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.doc.XViewMiddleware",
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+#     'django.middleware.http.ConditionalGetMiddleware',
+#     'django.middleware.gzip.GZipMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.doc.XViewMiddleware',
 )
 
 ############
@@ -228,6 +253,7 @@ SESSION_COOKIE_NAME = 'sessionid'         # Cookie name. This can be whatever yo
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2 # Age of cookie, in seconds (default: 2 weeks).
 SESSION_COOKIE_DOMAIN = None              # A string like ".lawrence.com", or None for standard domain cookie.
 SESSION_SAVE_EVERY_REQUEST = False        # Whether to save the session data on every request.
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False   # Whether sessions expire when a user closes his browser.
 
 #########
 # CACHE #
@@ -263,3 +289,9 @@ COMMENTS_FIRST_FEW = 0
 # A tuple of IP addresses that have been banned from participating in various
 # Django-powered features.
 BANNED_IPS = ()
+
+##################
+# AUTHENTICATION #
+##################
+
+AUTHENTICATION_BACKENDS = ('django.contrib.auth.backends.ModelBackend',)

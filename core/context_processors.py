@@ -4,10 +4,10 @@ template context. Each function takes the request object as its only parameter
 and returns a dictionary to add to the context.
 
 These are referenced from the setting TEMPLATE_CONTEXT_PROCESSORS and used by
-DjangoContext.
+RequestContext.
 """
 
-from django.conf.settings import DEBUG, INTERNAL_IPS, LANGUAGES, LANGUAGE_CODE
+from django.conf import settings
 
 def auth(request):
     """
@@ -23,19 +23,23 @@ def auth(request):
 def debug(request):
     "Returns context variables helpful for debugging."
     context_extras = {}
-    if DEBUG and request.META.get('REMOTE_ADDR') in INTERNAL_IPS:
+    if settings.DEBUG and request.META.get('REMOTE_ADDR') in settings.INTERNAL_IPS:
         context_extras['debug'] = True
-        from django.core import db
-        context_extras['sql_queries'] = db.db.queries
+        from django.db import connection
+        context_extras['sql_queries'] = connection.queries
     return context_extras
 
 def i18n(request):
     context_extras = {}
-    context_extras['LANGUAGES'] = LANGUAGES
+    context_extras['LANGUAGES'] = settings.LANGUAGES
     if hasattr(request, 'LANGUAGE_CODE'):
         context_extras['LANGUAGE_CODE'] = request.LANGUAGE_CODE
     else:
-        context_extras['LANGUAGE_CODE'] = LANGUAGE_CODE
+        context_extras['LANGUAGE_CODE'] = settings.LANGUAGE_CODE
+
+    from django.utils import translation
+    context_extras['LANGUAGE_BIDI'] = translation.get_language_bidi()
+
     return context_extras
 
 def request(request):
@@ -44,7 +48,7 @@ def request(request):
 # PermWrapper and PermLookupDict proxy the permissions system into objects that
 # the template system can understand.
 
-class PermLookupDict:
+class PermLookupDict(object):
     def __init__(self, user, module_name):
         self.user, self.module_name = user, module_name
     def __repr__(self):
@@ -54,7 +58,7 @@ class PermLookupDict:
     def __nonzero__(self):
         return self.user.has_module_perms(self.module_name)
 
-class PermWrapper:
+class PermWrapper(object):
     def __init__(self, user):
         self.user = user
     def __getitem__(self, module_name):

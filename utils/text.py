@@ -1,6 +1,6 @@
 import re
 
-from django.conf.settings import DEFAULT_CHARSET
+from django.conf import settings
 
 # Capitalizes the first letter of a string.
 capfirst = lambda x: x and x[0].upper() + x[1:]
@@ -100,7 +100,7 @@ def javascript_quote(s):
         return r"\u%04x" % ord(match.group(1))
 
     if type(s) == str:
-        s = s.decode(DEFAULT_CHARSET)
+        s = s.decode(settings.DEFAULT_CHARSET)
     elif type(s) != unicode:
         raise TypeError, s
     s = s.replace('\\', '\\\\')
@@ -109,3 +109,21 @@ def javascript_quote(s):
     s = s.replace("'", "\\'")
     return str(ustring_re.sub(fix, s))
 
+smart_split_re = re.compile('("(?:[^"\\\\]*(?:\\\\.[^"\\\\]*)*)"|\'(?:[^\'\\\\]*(?:\\\\.[^\'\\\\]*)*)\'|[^\\s]+)')
+def smart_split(text):
+    """
+    Generator that splits a string by spaces, leaving quoted phrases together.
+    Supports both single and double quotes, and supports escaping quotes with
+    backslashes. In the output, strings will keep their initial and trailing
+    quote marks.
+    >>> list(smart_split('This is "a person\'s" test.'))
+    ['This', 'is', '"a person\'s"', 'test.']
+    """
+    for bit in smart_split_re.finditer(text):
+        bit = bit.group(0)
+        if bit[0] == '"':
+            yield '"' + bit[1:-1].replace('\\"', '"').replace('\\\\', '\\') + '"'
+        elif bit[0] == "'":
+            yield "'" + bit[1:-1].replace("\\'", "'").replace("\\\\", "\\") + "'"
+        else:
+            yield bit

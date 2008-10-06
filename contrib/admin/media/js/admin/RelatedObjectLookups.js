@@ -18,11 +18,11 @@ function showRelatedObjectLookupPopup(triggeringLink) {
 
 function dismissRelatedLookupPopup(win, chosenId) {
     var name = win.name.replace(/___/g, '.');
-    var elem = document.getElementById(win.name);
+    var elem = document.getElementById(name);
     if (elem.className.indexOf('vRawIdAdminField') != -1 && elem.value) {
         elem.value += ',' + chosenId;
     } else {
-        document.getElementById(win.name).value = chosenId;
+        document.getElementById(name).value = chosenId;
     }
     win.close();
 }
@@ -42,7 +42,7 @@ function dismissAddAnotherPopup(win, newId, newRepr) {
         if (elem.nodeName == 'SELECT') {
             var o = new Option(newRepr, newId);
             elem.options[elem.options.length] = o;
-            elem.selectedIndex = elem.length - 1;
+            o.selected = true;
         } else if (elem.nodeName == 'INPUT') {
             elem.value = newId;
         }

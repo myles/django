@@ -3,7 +3,7 @@
 from django.utils.cache import patch_vary_headers
 from django.utils import translation
 
-class LocaleMiddleware:
+class LocaleMiddleware(object):
     """
     This is a very simple middleware that parses a request
     and decides what translation object to install in the current
@@ -19,6 +19,6 @@ class LocaleMiddleware:
 
     def process_response(self, request, response):
         patch_vary_headers(response, ('Accept-Language',))
+        response['Content-Language'] = translation.get_language()
         translation.deactivate()
         return response
-

@@ -1,4 +1,4 @@
-from django.utils import httpwrappers
+from django import http
 from django.utils.translation import check_for_language, activate, to_locale, get_language
 from django.utils.text import javascript_quote
 from django.conf import settings
@@ -17,7 +17,7 @@ def set_language(request):
         next = request.META.get('HTTP_REFERER', None)
     if not next:
         next = '/'
-    response = httpwrappers.HttpResponseRedirect(next)
+    response = http.HttpResponseRedirect(next)
     if check_for_language(lang_code):
         if hasattr(request, 'session'):
             request.session['django_language'] = lang_code
@@ -28,21 +28,9 @@ def set_language(request):
 NullSource = """
 /* gettext identity library */
 
-function gettext(msgid) {
-    return msgid;
-}
-
-function ngettext(singular, plural, count) {
-    if (count == 1) {
-        return singular;
-    } else {
-        return plural;
-    }
-}
-
-function gettext_noop(msgid) {
-    return msgid;
-}
+function gettext(msgid) { return msgid; }
+function ngettext(singular, plural, count) { return (count == 1) ? singular : plural; }
+function gettext_noop(msgid) { return msgid; }
 """
 
 LibHead = """
@@ -54,55 +42,46 @@ var catalog = new Array();
 LibFoot = """
 
 function gettext(msgid) {
-    var value = catalog[msgid];
-    if (typeof(value) == 'undefined') {
-        return msgid;
-    } else {
-        if (typeof(value) == 'string') {
-            return value;
-        } else {
-            return value[0];
-        }
-    }
+  var value = catalog[msgid];
+  if (typeof(value) == 'undefined') {
+    return msgid;
+  } else {
+    return (typeof(value) == 'string') ? value : value[0];
+  }
 }
 
 function ngettext(singular, plural, count) {
-    value = catalog[singular];
-    if (typeof(value) == 'undefined') {
-        if (count == 1) {
-            return singular;
-        } else {
-            return plural;
-        }
-    } else {
-        return value[pluralidx(count)];
-    }
+  value = catalog[singular];
+  if (typeof(value) == 'undefined') {
+    return (count == 1) ? singular : plural;
+  } else {
+    return value[pluralidx(count)];
+  }
 }
 
-function gettext_noop(msgid) {
-    return msgid;
-}
+function gettext_noop(msgid) { return msgid; }
 """
 
 SimplePlural = """
-function pluralidx(count) {
-    if (count == 1) {
-        return 0;
-    } else {
-        return 1;
-    }
-}
+function pluralidx(count) { return (count == 1) ? 0 : 1; }
 """
 
 InterPolate = r"""
 function interpolate(fmt, obj, named) {
-    if (named) {
-        return fmt.replace(/%\(\w+\)s/, function(match){return String(obj[match.slice(2,-2)])});
-    } else {
-        return fmt.replace(/%s/, function(match){return String(obj.shift())});
-    }
+  if (named) {
+    return fmt.replace(/%\(\w+\)s/, function(match){return String(obj[match.slice(2,-2)])});
+  } else {
+    return fmt.replace(/%s/, function(match){return String(obj.shift())});
+  }
 }
 """
+
+def null_javascript_catalog(request, domain=None, packages=None):
+    """
+    Returns "identity" versions of the JavaScript i18n functions -- i.e.,
+    versions that don't actually do anything.
+    """
+    return http.HttpResponse(NullSource + InterPolate, 'text/javascript')
 
 def javascript_catalog(request, domain='djangojs', packages=None):
     """
@@ -190,5 +169,4 @@ def javascript_catalog(request, domain='djangojs', packages=None):
     src.append(LibFoot)
     src.append(InterPolate)
     src = ''.join(src)
-    return httpwrappers.HttpResponse(src, 'text/javascript')
-
+    return http.HttpResponse(src, 'text/javascript')

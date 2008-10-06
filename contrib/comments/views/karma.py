@@ -1,6 +1,7 @@
-from django.core.exceptions import Http404
-from django.core.extensions import DjangoContext, render_to_response
-from django.models.comments import comments, karma
+from django.http import Http404
+from django.shortcuts import render_to_response
+from django.template import RequestContext
+from django.contrib.comments.models import Comment, KarmaScore
 
 def vote(request, comment_id, vote):
     """
@@ -14,15 +15,15 @@ def vote(request, comment_id, vote):
     rating = {'up': 1, 'down': -1}.get(vote, False)
     if not rating:
         raise Http404, "Invalid vote"
-    if request.user.is_anonymous():
+    if not request.user.is_authenticated():
         raise Http404, _("Anonymous users cannot vote")
     try:
-        comment = comments.get_object(pk=comment_id)
-    except comments.CommentDoesNotExist:
+        comment = Comment.objects.get(pk=comment_id)
+    except Comment.DoesNotExist:
         raise Http404, _("Invalid comment ID")
-    if comment.user_id == request.user.id:
+    if comment.user.id == request.user.id:
         raise Http404, _("No voting for yourself")
-    karma.vote(request.user.id, comment_id, rating)
+    KarmaScore.objects.vote(request.user.id, comment_id, rating)
     # Reload comment to ensure we have up to date karma count
-    comment = comments.get_object(pk=comment_id)
-    return render_to_response('comments/karma_vote_accepted', {'comment': comment}, context_instance=DjangoContext(request))
+    comment = Comment.objects.get(pk=comment_id)
+    return render_to_response('comments/karma_vote_accepted.html', {'comment': comment}, context_instance=RequestContext(request))

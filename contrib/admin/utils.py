@@ -3,7 +3,6 @@
 import re
 from email.Parser import HeaderParser
 from email.Errors import HeaderParseError
-from urlparse import urljoin
 try:
     import docutils.core
     import docutils.nodes
@@ -81,19 +80,23 @@ ROLES = {
 }
 
 def create_reference_role(rolename, urlbase):
-    def _role(name, rawtext, text, lineno, inliner, options={}, content=[]):
-        node = docutils.nodes.reference(rawtext, text, refuri=(urlbase % (inliner.document.settings.link_base, text)), **options)
+    def _role(name, rawtext, text, lineno, inliner, options=None, content=None):
+        if options is None: options = {}
+        if content is None: content = []
+        node = docutils.nodes.reference(rawtext, text, refuri=(urlbase % (inliner.document.settings.link_base, text.lower())), **options)
         return [node], []
     docutils.parsers.rst.roles.register_canonical_role(rolename, _role)
 
-def default_reference_role(name, rawtext, text, lineno, inliner, options={}, content=[]):
+def default_reference_role(name, rawtext, text, lineno, inliner, options=None, content=None):
+    if options is None: options = {}
+    if content is None: content = []
     context = inliner.document.settings.default_reference_context
-    node = docutils.nodes.reference(rawtext, text, refuri=(ROLES[context] % (inliner.document.settings.link_base, text)), **options)
+    node = docutils.nodes.reference(rawtext, text, refuri=(ROLES[context] % (inliner.document.settings.link_base, text.lower())), **options)
     return [node], []
 
 if docutils_is_available:
     docutils.parsers.rst.roles.register_canonical_role('cmsreference', default_reference_role)
     docutils.parsers.rst.roles.DEFAULT_INTERPRETED_ROLE = 'cmsreference'
 
-    for (name, urlbase) in ROLES.items():
+    for name, urlbase in ROLES.items():
         create_reference_role(name, urlbase)

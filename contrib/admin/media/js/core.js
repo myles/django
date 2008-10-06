@@ -19,6 +19,7 @@ function removeEvent(obj, evType, fn) {
         return true;
     } else if (obj.detachEvent) {
         obj.detachEvent("on" + evType, fn);
+        return true;
     } else {
         return false;
     }
@@ -135,4 +136,21 @@ String.prototype.pad_left = function(pad_length, pad_string) {
         new_string = pad_string + new_string;
     }
     return new_string;
+}
+
+// ----------------------------------------------------------------------------
+// Get the computed style for and element
+// ----------------------------------------------------------------------------
+function getStyle(oElm, strCssRule){
+    var strValue = "";
+    if(document.defaultView && document.defaultView.getComputedStyle){
+        strValue = document.defaultView.getComputedStyle(oElm, "").getPropertyValue(strCssRule);
+    }
+    else if(oElm.currentStyle){
+        strCssRule = strCssRule.replace(/\-(\w)/g, function (strMatch, p1){
+            return p1.toUpperCase();
+        });
+        strValue = oElm.currentStyle[strCssRule];
+    }
+    return strValue;
 }
