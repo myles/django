@@ -15,6 +15,7 @@
 {% block breadcrumbs %}{% if not is_popup %}
 <div class="breadcrumbs">
      <a href="../../../">{% trans "Home" %}</a> &rsaquo;
+     <a href="../../">{{ app_label|capfirst|escape }}</a> &rsaquo; 
      <a href="../">{{ opts.verbose_name_plural|capfirst }}</a> &rsaquo;
      {% if add %}{% trans "Add" %} {{ opts.verbose_name }}{% else %}{{ original|truncatewords:"18" }}{% endif %}
 </div>
@@ -58,20 +59,7 @@
 {% endif %}
 
 {# JavaScript for prepopulated fields #}
-
-{% if add %}
-<script type="text/javascript">
-{% for field in adminform.prepopulated_fields %}
-    document.getElementById("{{ field.field.auto_id }}").onchange = function() { this._changed = true; };
-    {% for dependency in field.dependencies %}
-    document.getElementById("{{ dependency.auto_id }}").onkeyup = function() {
-        var e = document.getElementById("{{ field.field.auto_id }}");
-        if (!e._changed) { e.value = URLify({% for innerdep in field.dependencies %}document.getElementById("{{ innerdep.auto_id }}").value{% if not forloop.last %} + ' ' + {% endif %}{% endfor %}, {{ field.field.field.max_length }}); }
-    }
-    {% endfor %}
-{% endfor %}
-</script>
-{% endif %}
+{% prepopulated_fields_js %}
 
 </div>
 </form></div>

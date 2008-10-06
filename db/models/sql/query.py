@@ -11,6 +11,7 @@ from copy import deepcopy
 
 from django.utils.tree import Node
 from django.utils.datastructures import SortedDict
+from django.utils.encoding import force_unicode
 from django.db import connection
 from django.db.models import signals
 from django.db.models.fields import FieldDoesNotExist
@@ -57,6 +58,8 @@ class Query(object):
         self.select_fields = []
         self.related_select_fields = []
         self.dupe_avoidance = {}
+        self.used_aliases = set()
+        self.filter_is_sticky = False
 
         # SQL-related attributes
         self.select = []
@@ -77,8 +80,7 @@ class Query(object):
 
         # These are for extensions. The contents are more or less appended
         # verbatim to the appropriate clause.
-        self.extra_select = {}  # Maps col_alias -> col_sql.
-        self.extra_select_params = ()
+        self.extra_select = SortedDict()  # Maps col_alias -> (col_sql, params).
         self.extra_tables = ()
         self.extra_where = ()
         self.extra_params = ()
@@ -181,11 +183,15 @@ class Query(object):
         obj.related_select_cols = []
         obj.max_depth = self.max_depth
         obj.extra_select = self.extra_select.copy()
-        obj.extra_select_params = self.extra_select_params
         obj.extra_tables = self.extra_tables
         obj.extra_where = self.extra_where
         obj.extra_params = self.extra_params
         obj.extra_order_by = self.extra_order_by
+        if self.filter_is_sticky and self.used_aliases:
+            obj.used_aliases = self.used_aliases.copy()
+        else:
+            obj.used_aliases = set()
+        obj.filter_is_sticky = False
         obj.__dict__.update(kwargs)
         if hasattr(obj, '_setup_query'):
             obj._setup_query()
@@ -226,7 +232,7 @@ class Query(object):
             obj = self.clone(CountQuery, _query=obj, where=self.where_class(),
                     distinct=False)
             obj.select = []
-            obj.extra_select = {}
+            obj.extra_select = SortedDict()
         obj.add_count_column()
         data = obj.execute_sql(SINGLE)
         if not data:
@@ -259,7 +265,9 @@ class Query(object):
         from_, f_params = self.get_from_clause()
 
         where, w_params = self.where.as_sql(qn=self.quote_name_unless_alias)
-        params = list(self.extra_select_params)
+        params = []
+        for val in self.extra_select.itervalues():
+            params.extend(val[1])
 
         result = ['SELECT']
         if self.distinct:
@@ -413,7 +421,7 @@ class Query(object):
         """
         qn = self.quote_name_unless_alias
         qn2 = self.connection.ops.quote_name
-        result = ['(%s) AS %s' % (col, qn2(alias)) for alias, col in self.extra_select.iteritems()]
+        result = ['(%s) AS %s' % (col[0], qn2(alias)) for alias, col in self.extra_select.iteritems()]
         aliases = set(self.extra_select.keys())
         if with_aliases:
             col_aliases = aliases.copy()
@@ -541,7 +549,10 @@ class Query(object):
             first = False
         for t in self.extra_tables:
             alias, unused = self.table_alias(t)
-            if alias not in self.alias_map:
+            # Only add the alias if it's not already present (the table_alias()
+            # calls increments the refcount, so an alias refcount of one means
+            # this is the only reference.
+            if alias not in self.alias_map or self.alias_refcount[alias] == 1:
                 connector = not first and ', ' or ''
                 result.append('%s%s' % (connector, qn(alias)))
                 first = False
@@ -636,8 +647,8 @@ class Query(object):
         pieces = name.split(LOOKUP_SEP)
         if not alias:
             alias = self.get_initial_alias()
-        field, target, opts, joins, last = self.setup_joins(pieces, opts,
-                alias, False)
+        field, target, opts, joins, last, extra = self.setup_joins(pieces,
+                opts, alias, False)
         alias = joins[-1]
         col = target.column
         if not field.rel:
@@ -902,7 +913,7 @@ class Query(object):
 
     def fill_related_selections(self, opts=None, root_alias=None, cur_depth=1,
             used=None, requested=None, restricted=None, nullable=None,
-            dupe_set=None):
+            dupe_set=None, avoid_set=None):
         """
         Fill in the information needed for a select_related query. The current
         depth is measured as the number of connections away from the root model
@@ -922,8 +933,9 @@ class Query(object):
             used = set()
         if dupe_set is None:
             dupe_set = set()
+        if avoid_set is None:
+            avoid_set = set()
         orig_dupe_set = dupe_set
-        orig_used = used
 
         # Setup for the case when only particular related fields should be
         # included in the related selection.
@@ -937,8 +949,12 @@ class Query(object):
         for f, model in opts.get_fields_with_model():
             if not select_related_descend(f, restricted, requested):
                 continue
+            # The "avoid" set is aliases we want to avoid just for this
+            # particular branch of the recursion. They aren't permanently
+            # forbidden from reuse in the related selection tables (which is
+            # what "used" specifies).
+            avoid = avoid_set.copy()
             dupe_set = orig_dupe_set.copy()
-            used = orig_used.copy()
             table = f.rel.to._meta.db_table
             if nullable or f.null:
                 promote = True
@@ -951,7 +967,7 @@ class Query(object):
                     lhs_col = int_opts.parents[int_model].column
                     dedupe = lhs_col in opts.duplicate_targets
                     if dedupe:
-                        used.update(self.dupe_avoidance.get(id(opts), lhs_col),
+                        avoid.update(self.dupe_avoidance.get(id(opts), lhs_col),
                                 ())
                         dupe_set.add((opts, lhs_col))
                     int_opts = int_model._meta
@@ -965,13 +981,13 @@ class Query(object):
 
             dedupe = f.column in opts.duplicate_targets
             if dupe_set or dedupe:
-                used.update(self.dupe_avoidance.get((id(opts), f.column), ()))
+                avoid.update(self.dupe_avoidance.get((id(opts), f.column), ()))
                 if dedupe:
                     dupe_set.add((opts, f.column))
 
             alias = self.join((alias, table, f.column,
-                    f.rel.get_related_field().column), exclusions=used,
-                    promote=promote)
+                    f.rel.get_related_field().column),
+                    exclusions=used.union(avoid), promote=promote)
             used.add(alias)
             self.related_select_cols.extend(self.get_default_columns(
                 start_alias=alias, opts=f.rel.to._meta, as_pairs=True)[0])
@@ -987,10 +1003,10 @@ class Query(object):
             for dupe_opts, dupe_col in dupe_set:
                 self.update_dupe_avoidance(dupe_opts, dupe_col, alias)
             self.fill_related_selections(f.rel.to._meta, alias, cur_depth + 1,
-                    used, next, restricted, new_nullable, dupe_set)
+                    used, next, restricted, new_nullable, dupe_set, avoid)
 
     def add_filter(self, filter_expr, connector=AND, negate=False, trim=False,
-            can_reuse=None):
+            can_reuse=None, process_extras=True):
         """
         Add a single filter to the query. The 'filter_expr' is a pair:
         (filter_string, value). E.g. ('name__contains', 'fred')
@@ -1010,6 +1026,10 @@ class Query(object):
         will be a set of table aliases that can be reused in this filter, even
         if we would otherwise force the creation of new aliases for a join
         (needed for nested Q-filters). The set is updated by this method.
+
+        If 'process_extras' is set, any extra filters returned from the table
+        joining process will be processed. This parameter is set to False
+        during the processing of extra filters to avoid infinite recursion.
         """
         arg, value = filter_expr
         parts = arg.split(LOOKUP_SEP)
@@ -1037,8 +1057,8 @@ class Query(object):
         allow_many = trim or not negate
 
         try:
-            field, target, opts, join_list, last = self.setup_joins(parts, opts,
-                    alias, True, allow_many, can_reuse=can_reuse)
+            field, target, opts, join_list, last, extra_filters = self.setup_joins(
+                    parts, opts, alias, True, allow_many, can_reuse=can_reuse)
         except MultiJoin, e:
             self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]))
             return
@@ -1136,6 +1156,10 @@ class Query(object):
 
         if can_reuse is not None:
             can_reuse.update(join_list)
+        if process_extras:
+            for filter in extra_filters:
+                self.add_filter(filter, negate=negate, can_reuse=can_reuse,
+                        process_extras=False)
 
     def add_q(self, q_object, used_aliases=None):
         """
@@ -1144,31 +1168,32 @@ class Query(object):
         Can also be used to add anything that has an 'add_to_query()' method.
         """
         if used_aliases is None:
-            used_aliases = set()
+            used_aliases = self.used_aliases
         if hasattr(q_object, 'add_to_query'):
             # Complex custom objects are responsible for adding themselves.
             q_object.add_to_query(self, used_aliases)
-            return
-
-        if self.where and q_object.connector != AND and len(q_object) > 1:
-            self.where.start_subtree(AND)
-            subtree = True
         else:
-            subtree = False
-        connector = AND
-        for child in q_object.children:
-            if isinstance(child, Node):
-                self.where.start_subtree(connector)
-                self.add_q(child, used_aliases)
-                self.where.end_subtree()
+            if self.where and q_object.connector != AND and len(q_object) > 1:
+                self.where.start_subtree(AND)
+                subtree = True
             else:
-                self.add_filter(child, connector, q_object.negated,
-                        can_reuse=used_aliases)
-            connector = q_object.connector
-        if q_object.negated:
-            self.where.negate()
-        if subtree:
-            self.where.end_subtree()
+                subtree = False
+            connector = AND
+            for child in q_object.children:
+                if isinstance(child, Node):
+                    self.where.start_subtree(connector)
+                    self.add_q(child, used_aliases)
+                    self.where.end_subtree()
+                else:
+                    self.add_filter(child, connector, q_object.negated,
+                            can_reuse=used_aliases)
+                connector = q_object.connector
+            if q_object.negated:
+                self.where.negate()
+            if subtree:
+                self.where.end_subtree()
+        if self.filter_is_sticky:
+            self.used_aliases = used_aliases
 
     def setup_joins(self, names, opts, alias, dupe_multis, allow_many=True,
             allow_explicit_fk=False, can_reuse=None):
@@ -1190,6 +1215,7 @@ class Query(object):
         last = [0]
         dupe_set = set()
         exclusions = set()
+        extra_filters = []
         for pos, name in enumerate(names):
             try:
                 exclusions.add(int_alias)
@@ -1245,6 +1271,8 @@ class Query(object):
                 exclusions.update(self.dupe_avoidance.get((id(opts), dupe_col),
                         ()))
 
+            if hasattr(field, 'extra_filters'):
+                extra_filters.append(field.extra_filters(names, pos))
             if direct:
                 if m2m:
                     # Many-to-many field defined on the current model.
@@ -1348,7 +1376,7 @@ class Query(object):
         if pos != len(names) - 1:
             raise FieldError("Join on field %r not permitted." % name)
 
-        return field, target, opts, joins, last
+        return field, target, opts, joins, last, extra_filters
 
     def update_dupe_avoidance(self, opts, col, alias):
         """
@@ -1420,7 +1448,7 @@ class Query(object):
         opts = self.get_meta()
         try:
             for name in field_names:
-                field, target, u2, joins, u3 = self.setup_joins(
+                field, target, u2, joins, u3, u4 = self.setup_joins(
                         name.split(LOOKUP_SEP), opts, alias, False, allow_m2m,
                         True)
                 final_alias = joins[-1]
@@ -1510,7 +1538,6 @@ class Query(object):
         self.select = [select]
         self.select_fields = [None]
         self.extra_select = {}
-        self.extra_select_params = ()
 
     def add_select_related(self, fields):
         """
@@ -1533,14 +1560,25 @@ class Query(object):
         to the query.
         """
         if select:
-            # The extra select might be ordered (because it will be accepting
-            # parameters).
-            if (isinstance(select, SortedDict) and
-                    not isinstance(self.extra_select, SortedDict)):
-                self.extra_select = SortedDict(self.extra_select)
-            self.extra_select.update(select)
-        if select_params:
-            self.extra_select_params += tuple(select_params)
+            # We need to pair any placeholder markers in the 'select'
+            # dictionary with their parameters in 'select_params' so that
+            # subsequent updates to the select dictionary also adjust the
+            # parameters appropriately.
+            select_pairs = SortedDict()
+            if select_params:
+                param_iter = iter(select_params)
+            else:
+                param_iter = iter([])
+            for name, entry in select.items():
+                entry = force_unicode(entry)
+                entry_params = []
+                pos = entry.find("%s")
+                while pos != -1:
+                    entry_params.append(param_iter.next())
+                    pos = entry.find("%s", pos + 2)
+                select_pairs[name] = (entry, entry_params)
+            # This is order preserving, since self.extra_select is a SortedDict.
+            self.extra_select.update(select_pairs)
         if where:
             self.extra_where += tuple(where)
         if params:
@@ -1574,7 +1612,7 @@ class Query(object):
         """
         opts = self.model._meta
         alias = self.get_initial_alias()
-        field, col, opts, joins, last = self.setup_joins(
+        field, col, opts, joins, last, extra = self.setup_joins(
                 start.split(LOOKUP_SEP), opts, alias, False)
         alias = joins[last[-1]]
         self.select = [(alias, self.alias_map[alias][RHS_JOIN_COL])]

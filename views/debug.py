@@ -7,7 +7,7 @@ from django.conf import settings
 from django.template import Template, Context, TemplateDoesNotExist
 from django.utils.html import escape
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
-from django.utils.encoding import smart_unicode
+from django.utils.encoding import smart_unicode, smart_str
 
 HIDDEN_SETTINGS = re.compile('SECRET|PASSWORD|PROFANITIES_LIST')
 
@@ -256,7 +256,7 @@ def technical_404_response(request, exception):
         'root_urlconf': settings.ROOT_URLCONF,
         'request_path': request.path[1:], # Trim leading slash
         'urlpatterns': tried,
-        'reason': str(exception),
+        'reason': smart_str(exception, errors='replace'),
         'request': request,
         'request_protocol': request.is_secure() and "https" or "http",
         'settings': get_safe_settings(),
@@ -328,6 +328,7 @@ TECHNICAL_500_TEMPLATE = """
     .specific { color:#cc3300; font-weight:bold; }
     h2 span.commands { font-size:.7em;}
     span.commands a:link {color:#5E5694;}
+    pre.exception_value { font-family: sans-serif; color: #666; font-size: 1.5em; margin: 10px 0 10px 0; }
   </style>
   <script type="text/javascript">
   //<!--
@@ -388,7 +389,7 @@ TECHNICAL_500_TEMPLATE = """
 <body>
 <div id="summary">
   <h1>{{ exception_type }} at {{ request.path|escape }}</h1>
-  <h2>{{ exception_value|escape }}</h2>
+  <pre class="exception_value">{{ exception_value|escape }}</pre>
   <table class="meta">
     <tr>
       <th>Request Method:</th>
@@ -404,7 +405,7 @@ TECHNICAL_500_TEMPLATE = """
     </tr>
     <tr>
       <th>Exception Value:</th>
-      <td>{{ exception_value|escape }}</td>
+      <td><pre>{{ exception_value|escape }}<pre></td>
     </tr>
     <tr>
       <th>Exception Location:</th>

@@ -27,18 +27,18 @@ from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import smart_unicode, smart_str
 
 from util import ErrorList, ValidationError
-from widgets import TextInput, PasswordInput, HiddenInput, MultipleHiddenInput, FileInput, CheckboxInput, Select, NullBooleanSelect, SelectMultiple, DateTimeInput
+from widgets import TextInput, PasswordInput, HiddenInput, MultipleHiddenInput, FileInput, CheckboxInput, Select, NullBooleanSelect, SelectMultiple, DateTimeInput, TimeInput
 from django.core.files.uploadedfile import SimpleUploadedFile as UploadedFile
 
 __all__ = (
     'Field', 'CharField', 'IntegerField',
     'DEFAULT_DATE_INPUT_FORMATS', 'DateField',
     'DEFAULT_TIME_INPUT_FORMATS', 'TimeField',
-    'DEFAULT_DATETIME_INPUT_FORMATS', 'DateTimeField',
+    'DEFAULT_DATETIME_INPUT_FORMATS', 'DateTimeField', 'TimeField',
     'RegexField', 'EmailField', 'FileField', 'ImageField', 'URLField',
     'BooleanField', 'NullBooleanField', 'ChoiceField', 'MultipleChoiceField',
     'ComboField', 'MultiValueField', 'FloatField', 'DecimalField',
-    'SplitDateTimeField', 'IPAddressField', 'FilePathField',
+    'SplitDateTimeField', 'IPAddressField', 'FilePathField', 'SlugField',
 )
 
 # These values, if given to to_python(), will trigger the self.required check.
@@ -244,18 +244,28 @@ class DecimalField(Field):
             value = Decimal(value)
         except DecimalException:
             raise ValidationError(self.error_messages['invalid'])
-        pieces = str(value).lstrip("-").split('.')
-        decimals = (len(pieces) == 2) and len(pieces[1]) or 0
-        digits = len(pieces[0])
+
+        sign, digittuple, exponent = value.as_tuple()
+        decimals = abs(exponent)
+        # digittuple doesn't include any leading zeros.
+        digits = len(digittuple)
+        if decimals >= digits:
+            # We have leading zeros up to or past the decimal point.  Count
+            # everything past the decimal point as a digit.  We also add one
+            # for leading zeros before the decimal point (any number of leading
+            # whole zeros collapse to one digit).
+            digits = decimals + 1
+        whole_digits = digits - decimals
+
         if self.max_value is not None and value > self.max_value:
             raise ValidationError(self.error_messages['max_value'] % self.max_value)
         if self.min_value is not None and value < self.min_value:
             raise ValidationError(self.error_messages['min_value'] % self.min_value)
-        if self.max_digits is not None and (digits + decimals) > self.max_digits:
+        if self.max_digits is not None and digits > self.max_digits:
             raise ValidationError(self.error_messages['max_digits'] % self.max_digits)
         if self.decimal_places is not None and decimals > self.decimal_places:
             raise ValidationError(self.error_messages['max_decimal_places'] % self.decimal_places)
-        if self.max_digits is not None and self.decimal_places is not None and digits > (self.max_digits - self.decimal_places):
+        if self.max_digits is not None and self.decimal_places is not None and whole_digits > (self.max_digits - self.decimal_places):
             raise ValidationError(self.error_messages['max_whole_digits'] % (self.max_digits - self.decimal_places))
         return value
 
@@ -301,6 +311,7 @@ DEFAULT_TIME_INPUT_FORMATS = (
 )
 
 class TimeField(Field):
+    widget = TimeInput
     default_error_messages = {
         'invalid': _(u'Enter a valid time.')
     }
@@ -763,7 +774,7 @@ class MultiValueField(Field):
 
 class FilePathField(ChoiceField):
     def __init__(self, path, match=None, recursive=False, required=True,
-                 widget=Select, label=None, initial=None, help_text=None,
+                 widget=None, label=None, initial=None, help_text=None,
                  *args, **kwargs):
         self.path, self.match, self.recursive = path, match, recursive
         super(FilePathField, self).__init__(choices=(), required=required,
@@ -824,3 +835,14 @@ class IPAddressField(RegexField):
 
     def __init__(self, *args, **kwargs):
         super(IPAddressField, self).__init__(ipv4_re, *args, **kwargs)
+
+slug_re = re.compile(r'^[-\w]+$')
+
+class SlugField(RegexField):
+    default_error_messages = {
+        'invalid': _(u"Enter a valid 'slug' consisting of letters, numbers,"
+                     u" underscores or hyphens."),
+    }
+
+    def __init__(self, *args, **kwargs):
+        super(SlugField, self).__init__(slug_re, *args, **kwargs)

@@ -96,7 +96,7 @@ def model_to_dict(instance, fields=None, exclude=None):
     the ``fields`` argument.
     """
     # avoid a circular import
-    from django.db.models.fields.related import ManyToManyField
+    from django.db.models.fields.related import ManyToManyField, OneToOneField
     opts = instance._meta
     data = {}
     for f in opts.fields + opts.many_to_many:
@@ -115,6 +115,8 @@ def model_to_dict(instance, fields=None, exclude=None):
             else:
                 # MultipleChoiceWidget needs a list of pks, not object instances.
                 data[f.name] = [obj.pk for obj in f.value_from_object(instance)]
+        elif isinstance(f, OneToOneField):
+            data[f.attname] = f.value_from_object(instance)
         else:
             data[f.name] = f.value_from_object(instance)
     return data
@@ -161,6 +163,7 @@ class ModelFormMetaclass(type):
         except NameError:
             # We are defining ModelForm itself.
             parents = None
+        declared_fields = get_declared_fields(bases, attrs, False)
         new_class = super(ModelFormMetaclass, cls).__new__(cls, name, bases,
                 attrs)
         if not parents:
@@ -168,7 +171,6 @@ class ModelFormMetaclass(type):
 
         if 'media' not in attrs:
             new_class.media = media_property(new_class)
-        declared_fields = get_declared_fields(bases, attrs, False)
         opts = new_class._meta = ModelFormOptions(getattr(new_class, 'Meta', None))
         if opts.model:
             # If a model is defined, extract form fields from it.
@@ -317,7 +319,7 @@ class BaseModelFormSet(BaseFormSet):
 
     def add_fields(self, form, index):
         """Add a hidden field for the object's primary key."""
-        if self.model._meta.has_auto_field:
+        if self.model._meta.pk.auto_created:
             self._pk_field_name = self.model._meta.pk.attname
             form.fields[self._pk_field_name] = IntegerField(required=False, widget=HiddenInput)
         super(BaseModelFormSet, self).add_fields(form, index)
@@ -463,7 +465,7 @@ class ModelChoiceField(ChoiceField):
     }
 
     def __init__(self, queryset, empty_label=u"---------", cache_choices=False,
-                 required=True, widget=Select, label=None, initial=None,
+                 required=True, widget=None, label=None, initial=None,
                  help_text=None, *args, **kwargs):
         self.empty_label = empty_label
         self.cache_choices = cache_choices
@@ -523,6 +525,7 @@ class ModelChoiceField(ChoiceField):
 
 class ModelMultipleChoiceField(ModelChoiceField):
     """A MultipleChoiceField whose choices are a model QuerySet."""
+    widget = SelectMultiple
     hidden_widget = MultipleHiddenInput
     default_error_messages = {
         'list': _(u'Enter a list of values.'),
@@ -531,7 +534,7 @@ class ModelMultipleChoiceField(ModelChoiceField):
     }
 
     def __init__(self, queryset, cache_choices=False, required=True,
-                 widget=SelectMultiple, label=None, initial=None,
+                 widget=None, label=None, initial=None,
                  help_text=None, *args, **kwargs):
         super(ModelMultipleChoiceField, self).__init__(queryset, None,
             cache_choices, required, widget, label, initial, help_text,

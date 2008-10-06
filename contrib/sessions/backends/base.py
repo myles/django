@@ -121,7 +121,11 @@ class SessionBase(object):
         return self._session.iteritems()
 
     def clear(self):
-        self._session.clear()
+        # To avoid unnecessary persistent storage accesses, we set up the
+        # internals directly (loading data wastes time, since we are going to
+        # set it to an empty dict anyway).
+        self._session_cache = {}
+        self.accessed = True
         self.modified = True
 
     def _get_new_session_key(self):
@@ -234,6 +238,16 @@ class SessionBase(object):
         self.clear()
         self.delete()
         self.create()
+
+    def cycle_key(self):
+        """
+        Creates a new session key, whilst retaining the current session data.
+        """
+        data = self._session_cache
+        key = self.session_key
+        self.create()
+        self._session_cache = data
+        self.delete(key)
 
     # Methods that child classes must implement.
 
