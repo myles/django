@@ -8,7 +8,9 @@ var DateTimeShortcuts = {
     clockInputs: [],
     calendarDivName1: 'calendarbox', // name of calendar <div> that gets toggled
     calendarDivName2: 'calendarin',  // name of <div> that contains calendar
+    calendarLinkName: 'calendarlink',// name of the link that is used to toggle
     clockDivName: 'clockbox',        // name of clock <div> that gets toggled
+    clockLinkName: 'clocklink',      // name of the link that is used to toggle
     admin_media_prefix: '',
     init: function() {
         // Deduce admin_media_prefix by looking at the <script>s in the
@@ -42,10 +44,11 @@ var DateTimeShortcuts = {
         var shortcuts_span = document.createElement('span');
         inp.parentNode.insertBefore(shortcuts_span, inp.nextSibling);
         var now_link = document.createElement('a');
-        now_link.setAttribute('href', "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", new Date().getHourMinute());");
+        now_link.setAttribute('href', "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", new Date().getHourMinuteSecond());");
         now_link.appendChild(document.createTextNode(gettext('Now')));
         var clock_link = document.createElement('a');
         clock_link.setAttribute('href', 'javascript:DateTimeShortcuts.openClock(' + num + ');');
+        clock_link.id = DateTimeShortcuts.clockLinkName + num;
         quickElement('img', clock_link, '', 'src', DateTimeShortcuts.admin_media_prefix + 'img/admin/icon_clock.gif', 'alt', gettext('Clock'));
         shortcuts_span.appendChild(document.createTextNode('\240'));
         shortcuts_span.appendChild(now_link);
@@ -69,6 +72,29 @@ var DateTimeShortcuts = {
         var clock_box = document.createElement('div');
         clock_box.style.display = 'none';
         clock_box.style.position = 'absolute';
+        clock_box.className = 'clockbox module';
+        clock_box.setAttribute('id', DateTimeShortcuts.clockDivName + num);
+        document.body.appendChild(clock_box);
+        addEvent(clock_box, 'click', DateTimeShortcuts.cancelEventPropagation);
+
+        quickElement('h2', clock_box, gettext('Choose a time'));
+        time_list = quickElement('ul', clock_box, '');
+        time_list.className = 'timelist';
+        quickElement("a", quickElement("li", time_list, ""), gettext("Now"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", new Date().getHourMinuteSecond());")
+        quickElement("a", quickElement("li", time_list, ""), gettext("Midnight"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '00:00:00');")
+        quickElement("a", quickElement("li", time_list, ""), gettext("6 a.m."), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '06:00:00');")
+        quickElement("a", quickElement("li", time_list, ""), gettext("Noon"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '12:00:00');")
+
+        cancel_p = quickElement('p', clock_box, '');
+        cancel_p.className = 'calendar-cancel';
+        quickElement('a', cancel_p, gettext('Cancel'), 'href', 'javascript:DateTimeShortcuts.dismissClock(' + num + ');');
+    },
+    openClock: function(num) {
+        var clock_box = document.getElementById(DateTimeShortcuts.clockDivName+num)
+        var clock_link = document.getElementById(DateTimeShortcuts.clockLinkName+num)
+    
+        // Recalculate the clockbox position
+        // is it left-to-right or right-to-left layout ?
         if (getStyle(document.body,'direction')!='rtl') {
             clock_box.style.left = findPosX(clock_link) + 17 + 'px';
         }
@@ -80,25 +106,9 @@ var DateTimeShortcuts = {
             clock_box.style.left = findPosX(clock_link) - 110 + 'px';
         }
         clock_box.style.top = findPosY(clock_link) - 30 + 'px';
-        clock_box.className = 'clockbox module';
-        clock_box.setAttribute('id', DateTimeShortcuts.clockDivName + num);
-        document.body.appendChild(clock_box);
-        addEvent(clock_box, 'click', DateTimeShortcuts.cancelEventPropagation);
-
-        quickElement('h2', clock_box, gettext('Choose a time'));
-        time_list = quickElement('ul', clock_box, '');
-        time_list.className = 'timelist';
-        quickElement("a", quickElement("li", time_list, ""), gettext("Now"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", new Date().getHourMinute());")
-        quickElement("a", quickElement("li", time_list, ""), gettext("Midnight"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '00:00');")
-        quickElement("a", quickElement("li", time_list, ""), gettext("6 a.m."), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '06:00');")
-        quickElement("a", quickElement("li", time_list, ""), gettext("Noon"), "href", "javascript:DateTimeShortcuts.handleClockQuicklink(" + num + ", '12:00');")
-
-        cancel_p = quickElement('p', clock_box, '');
-        cancel_p.className = 'calendar-cancel';
-        quickElement('a', cancel_p, gettext('Cancel'), 'href', 'javascript:DateTimeShortcuts.dismissClock(' + num + ');');
-    },
-    openClock: function(num) {
-        document.getElementById(DateTimeShortcuts.clockDivName + num).style.display = 'block';
+    
+        // Show the clock box
+        clock_box.style.display = 'block';
         addEvent(window, 'click', function() { DateTimeShortcuts.dismissClock(num); return true; });
     },
     dismissClock: function(num) {
@@ -123,6 +133,7 @@ var DateTimeShortcuts = {
         today_link.appendChild(document.createTextNode(gettext('Today')));
         var cal_link = document.createElement('a');
         cal_link.setAttribute('href', 'javascript:DateTimeShortcuts.openCalendar(' + num + ');');
+        cal_link.id = DateTimeShortcuts.calendarLinkName + num;
         quickElement('img', cal_link, '', 'src', DateTimeShortcuts.admin_media_prefix + 'img/admin/icon_calendar.gif', 'alt', gettext('Calendar'));
         shortcuts_span.appendChild(document.createTextNode('\240'));
         shortcuts_span.appendChild(today_link);
@@ -149,18 +160,6 @@ var DateTimeShortcuts = {
         var cal_box = document.createElement('div');
         cal_box.style.display = 'none';
         cal_box.style.position = 'absolute';
-        // is it left-to-right or right-to-left layout ?
-        if (getStyle(document.body,'direction')!='rtl') {
-            cal_box.style.left = findPosX(cal_link) + 17 + 'px';
-        }
-        else {
-            // since style's width is in em, it'd be tough to calculate
-            // px value of it. let's use an estimated px for now
-            // TODO: IE returns wrong value for findPosX when in rtl mode
-            //       (it returns as it was left aligned), needs to be fixed.
-            cal_box.style.left = findPosX(cal_link) - 180 + 'px';
-        }
-        cal_box.style.top = findPosY(cal_link) - 75 + 'px';
         cal_box.className = 'calendarbox module';
         cal_box.setAttribute('id', DateTimeShortcuts.calendarDivName1 + num);
         document.body.appendChild(cal_box);
@@ -172,7 +171,6 @@ var DateTimeShortcuts = {
         cal_nav_prev.className = 'calendarnav-previous';
         var cal_nav_next = quickElement('a', cal_nav, '>', 'href', 'javascript:DateTimeShortcuts.drawNext('+num+');');
         cal_nav_next.className = 'calendarnav-next';
-        cal_box.appendChild(cal_nav);
 
         // main box
         var cal_main = quickElement('div', cal_box, '', 'id', DateTimeShortcuts.calendarDivName2 + num);
@@ -195,7 +193,24 @@ var DateTimeShortcuts = {
         quickElement('a', cancel_p, gettext('Cancel'), 'href', 'javascript:DateTimeShortcuts.dismissCalendar(' + num + ');');
     },
     openCalendar: function(num) {
-        document.getElementById(DateTimeShortcuts.calendarDivName1+num).style.display = 'block';
+        var cal_box = document.getElementById(DateTimeShortcuts.calendarDivName1+num)
+        var cal_link = document.getElementById(DateTimeShortcuts.calendarLinkName+num)
+    
+        // Recalculate the clockbox position
+        // is it left-to-right or right-to-left layout ?
+        if (getStyle(document.body,'direction')!='rtl') {
+            cal_box.style.left = findPosX(cal_link) + 17 + 'px';
+        }
+        else {
+            // since style's width is in em, it'd be tough to calculate
+            // px value of it. let's use an estimated px for now
+            // TODO: IE returns wrong value for findPosX when in rtl mode
+            //       (it returns as it was left aligned), needs to be fixed.
+            cal_box.style.left = findPosX(cal_link) - 180 + 'px';
+        }
+        cal_box.style.top = findPosY(cal_link) - 75 + 'px';
+    
+        cal_box.style.display = 'block';
         addEvent(window, 'click', function() { DateTimeShortcuts.dismissCalendar(num); return true; });
     },
     dismissCalendar: function(num) {

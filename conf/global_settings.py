@@ -25,7 +25,7 @@ ADMINS = ()
 INTERNAL_IPS = ()
 
 # Local time zone for this installation. All choices can be found here:
-# http://www.postgresql.org/docs/current/static/datetime-keywords.html#DATETIME-TIMEZONE-SET-TABLE
+# http://www.postgresql.org/docs/8.1/static/datetime-keywords.html#DATETIME-TIMEZONE-SET-TABLE
 TIME_ZONE = 'America/Chicago'
 
 # Language code for this installation. All choices can be found here:
@@ -38,6 +38,7 @@ LANGUAGE_CODE = 'en-us'
 LANGUAGES = (
     ('ar', gettext_noop('Arabic')),
     ('bn', gettext_noop('Bengali')),
+    ('ca', gettext_noop('Catalan')),
     ('cs', gettext_noop('Czech')),
     ('cy', gettext_noop('Welsh')),
     ('da', gettext_noop('Danish')),
@@ -46,6 +47,7 @@ LANGUAGES = (
     ('en', gettext_noop('English')),
     ('es', gettext_noop('Spanish')),
     ('es_AR', gettext_noop('Argentinean Spanish')),
+    ('fi', gettext_noop('Finnish')),
     ('fr', gettext_noop('French')),
     ('gl', gettext_noop('Galician')),
     ('hu', gettext_noop('Hungarian')),
@@ -53,8 +55,13 @@ LANGUAGES = (
     ('is', gettext_noop('Icelandic')),
     ('it', gettext_noop('Italian')),
     ('ja', gettext_noop('Japanese')),
+    ('kn', gettext_noop('Kannada')),
+    ('lv', gettext_noop('Latvian')),
+    ('mk', gettext_noop('Macedonian')),
     ('nl', gettext_noop('Dutch')),
     ('no', gettext_noop('Norwegian')),
+    ('pl', gettext_noop('Polish')),
+    ('pt', gettext_noop('Portugese')),
     ('pt-br', gettext_noop('Brazilian')),
     ('ro', gettext_noop('Romanian')),
     ('ru', gettext_noop('Russian')),
@@ -63,6 +70,8 @@ LANGUAGES = (
     ('sr', gettext_noop('Serbian')),
     ('sv', gettext_noop('Swedish')),
     ('ta', gettext_noop('Tamil')),
+    ('te', gettext_noop('Telugu')),
+    ('tr', gettext_noop('Turkish')),
     ('uk', gettext_noop('Ukrainian')),
     ('zh-cn', gettext_noop('Simplified Chinese')),
     ('zh-tw', gettext_noop('Traditional Chinese')),
@@ -92,12 +101,13 @@ SERVER_EMAIL = 'root@localhost'
 SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
-DATABASE_ENGINE = ''           # 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
+DATABASE_ENGINE = ''           # 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
 DATABASE_NAME = ''             # Or path to database file if using sqlite3.
 DATABASE_USER = ''             # Not used with sqlite3.
 DATABASE_PASSWORD = ''         # Not used with sqlite3.
 DATABASE_HOST = ''             # Set to empty string for localhost. Not used with sqlite3.
 DATABASE_PORT = ''             # Set to empty string for default. Not used with sqlite3.
+DATABASE_OPTIONS = {}          # Set to empty dictionary for default.
 
 # Host for sending e-mail.
 EMAIL_HOST = 'localhost'
@@ -221,13 +231,13 @@ YEAR_MONTH_FORMAT = 'F Y'
 # http://www.djangoproject.com/documentation/templates/#now
 MONTH_DAY_FORMAT = 'F j'
 
-# Whether to enable Psyco, which optimizes Python code. Requires Psyco.
-# http://psyco.sourceforge.net/
-ENABLE_PSYCO = False
-
 # Do you want to manage transactions manually?
 # Hint: you really don't!
 TRANSACTIONS_MANAGED = False
+
+# The User-Agent string to use when checking for URL validity through the
+# isExistingURL validator.
+URL_VALIDATOR_USER_AGENT = "Django/0.96pre (http://www.djangoproject.com)"
 
 ##############
 # MIDDLEWARE #
@@ -252,6 +262,7 @@ MIDDLEWARE_CLASSES = (
 SESSION_COOKIE_NAME = 'sessionid'         # Cookie name. This can be whatever you want.
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2 # Age of cookie, in seconds (default: 2 weeks).
 SESSION_COOKIE_DOMAIN = None              # A string like ".lawrence.com", or None for standard domain cookie.
+SESSION_COOKIE_SECURE = False             # Whether the session cookie should be secure (https:// only).
 SESSION_SAVE_EVERY_REQUEST = False        # Whether to save the session data on every request.
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False   # Whether sessions expire when a user closes his browser.
 
@@ -269,6 +280,10 @@ CACHE_MIDDLEWARE_KEY_PREFIX = ''
 ####################
 
 COMMENTS_ALLOW_PROFANITIES = False
+
+# The profanities that will trigger a validation error in the
+# 'hasNoProfanities' validator. All of these should be in lowercase.
+PROFANITIES_LIST = ('asshat', 'asshead', 'asshole', 'cunt', 'fuck', 'gook', 'nigger', 'shit')
 
 # The group ID that designates which users are banned.
 # Set to None if you're not using it.
@@ -295,3 +310,21 @@ BANNED_IPS = ()
 ##################
 
 AUTHENTICATION_BACKENDS = ('django.contrib.auth.backends.ModelBackend',)
+
+###########
+# TESTING #
+###########
+
+# The name of the method to use to invoke the test suite
+TEST_RUNNER = 'django.test.simple.run_tests'
+
+# The name of the database to use for testing purposes.
+# If None, a name of 'test_' + DATABASE_NAME will be assumed
+TEST_DATABASE_NAME = None
+
+############
+# FIXTURES #
+############
+
+# The list of directories to search for fixtures
+FIXTURE_DIRS = ()
