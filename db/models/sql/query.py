@@ -629,7 +629,7 @@ class Query(object):
                     result.append('%s %s' % (elt, order))
             else:
                 col, order = get_order_dir(field, asc)
-                elt = qn(col)
+                elt = qn2(col)
                 if distinct and elt not in select_aliases:
                     ordering_aliases.append(elt)
                 result.append('%s %s' % (elt, order))
@@ -658,8 +658,7 @@ class Query(object):
             self.ref_alias(alias)
 
         # Must use left outer joins for nullable fields.
-        for join in joins:
-            self.promote_alias(join)
+        self.promote_alias_chain(joins)
 
         # If we get to this point and the field is a relation to another model,
         # append the default ordering for that model.
@@ -714,7 +713,6 @@ class Query(object):
             alias = table_name
             self.table_map[alias] = [alias]
         self.alias_refcount[alias] = 1
-        #self.alias_map[alias] = None
         self.tables.append(alias)
         return alias, True
 
@@ -736,12 +734,44 @@ class Query(object):
         Returns True if the join was promoted.
         """
         if ((unconditional or self.alias_map[alias][NULLABLE]) and
-                self.alias_map[alias] != self.LOUTER):
+                self.alias_map[alias][JOIN_TYPE] != self.LOUTER):
             data = list(self.alias_map[alias])
             data[JOIN_TYPE] = self.LOUTER
             self.alias_map[alias] = tuple(data)
             return True
         return False
+
+    def promote_alias_chain(self, chain, must_promote=False):
+        """
+        Walks along a chain of aliases, promoting the first nullable join and
+        any joins following that. If 'must_promote' is True, all the aliases in
+        the chain are promoted.
+        """
+        for alias in chain:
+            if self.promote_alias(alias, must_promote):
+                must_promote = True
+
+    def promote_unused_aliases(self, initial_refcounts, used_aliases):
+        """
+        Given a "before" copy of the alias_refcounts dictionary (as
+        'initial_refcounts') and a collection of aliases that may have been
+        changed or created, works out which aliases have been created since
+        then and which ones haven't been used and promotes all of those
+        aliases, plus any children of theirs in the alias tree, to outer joins.
+        """
+        # FIXME: There's some (a lot of!) overlap with the similar OR promotion
+        # in add_filter(). It's not quite identical, but is very similar. So
+        # pulling out the common bits is something for later.
+        considered = {}
+        for alias in self.tables:
+            if alias not in used_aliases:
+                continue
+            if (alias not in initial_refcounts or
+                    self.alias_refcount[alias] == initial_refcounts[alias]):
+                parent = self.alias_map[alias][LHS_ALIAS]
+                must_promote = considered.get(parent, False)
+                promoted = self.promote_alias(alias, must_promote)
+                considered[alias] = must_promote or promoted
 
     def change_aliases(self, change_map):
         """
@@ -806,10 +836,11 @@ class Query(object):
         The 'exceptions' parameter is a container that holds alias names which
         should not be changed.
         """
-        assert ord(self.alias_prefix) < ord('Z')
-        self.alias_prefix = chr(ord(self.alias_prefix) + 1)
+        current = ord(self.alias_prefix)
+        assert current < ord('Z')
+        prefix = chr(current + 1)
+        self.alias_prefix = prefix
         change_map = {}
-        prefix = self.alias_prefix
         for pos, alias in enumerate(self.tables):
             if alias in exceptions:
                 continue
@@ -886,6 +917,8 @@ class Query(object):
                     if lhs_table and not self.alias_refcount[self.alias_map[alias][LHS_ALIAS]]:
                         # The LHS of this join tuple is no longer part of the
                         # query, so skip this possibility.
+                        continue
+                    if self.alias_map[alias][LHS_ALIAS] != lhs:
                         continue
                     self.ref_alias(alias)
                     if promote:
@@ -1049,6 +1082,10 @@ class Query(object):
                 raise ValueError("Cannot use None as a query value")
             lookup_type = 'isnull'
             value = True
+        elif (value == '' and lookup_type == 'exact' and
+              connection.features.interprets_empty_strings_as_nulls):
+            lookup_type = 'isnull'
+            value = True
         elif callable(value):
             value = value()
 
@@ -1058,9 +1095,11 @@ class Query(object):
 
         try:
             field, target, opts, join_list, last, extra_filters = self.setup_joins(
-                    parts, opts, alias, True, allow_many, can_reuse=can_reuse)
+                    parts, opts, alias, True, allow_many, can_reuse=can_reuse,
+                    negate=negate, process_extras=process_extras)
         except MultiJoin, e:
-            self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]))
+            self.split_exclude(filter_expr, LOOKUP_SEP.join(parts[:e.level]),
+                    can_reuse)
             return
         final = len(join_list)
         penultimate = last.pop()
@@ -1113,6 +1152,7 @@ class Query(object):
             table_it = iter(self.tables)
             join_it.next(), table_it.next()
             table_promote = False
+            join_promote = False
             for join in join_it:
                 table = table_it.next()
                 if join == table and self.alias_refcount[join] > 1:
@@ -1121,20 +1161,13 @@ class Query(object):
                 if table != join:
                     table_promote = self.promote_alias(table)
                 break
-            for join in join_it:
-                if self.promote_alias(join, join_promote):
-                    join_promote = True
-            for table in table_it:
-                # Some of these will have been promoted from the join_list, but
-                # that's harmless.
-                if self.promote_alias(table, table_promote):
-                    table_promote = True
+            self.promote_alias_chain(join_it, join_promote)
+            self.promote_alias_chain(table_it, table_promote)
 
         self.where.add((alias, col, field, lookup_type, value), connector)
 
         if negate:
-            for alias in join_list:
-                self.promote_alias(alias)
+            self.promote_alias_chain(join_list)
             if lookup_type != 'isnull':
                 if final > 1:
                     for alias in join_list:
@@ -1180,6 +1213,8 @@ class Query(object):
                 subtree = False
             connector = AND
             for child in q_object.children:
+                if connector == OR:
+                    refcounts_before = self.alias_refcount.copy()
                 if isinstance(child, Node):
                     self.where.start_subtree(connector)
                     self.add_q(child, used_aliases)
@@ -1187,6 +1222,12 @@ class Query(object):
                 else:
                     self.add_filter(child, connector, q_object.negated,
                             can_reuse=used_aliases)
+                if connector == OR:
+                    # Aliases that were newly added or not used at all need to
+                    # be promoted to outer joins if they are nullable relations.
+                    # (they shouldn't turn the whole conditional into the empty
+                    # set just because they don't match anything).
+                    self.promote_unused_aliases(refcounts_before, used_aliases)
                 connector = q_object.connector
             if q_object.negated:
                 self.where.negate()
@@ -1196,7 +1237,8 @@ class Query(object):
             self.used_aliases = used_aliases
 
     def setup_joins(self, names, opts, alias, dupe_multis, allow_many=True,
-            allow_explicit_fk=False, can_reuse=None):
+            allow_explicit_fk=False, can_reuse=None, negate=False,
+            process_extras=True):
         """
         Compute the necessary table joins for the passage through the fields
         given in 'names'. 'opts' is the Options class for the current model
@@ -1205,7 +1247,10 @@ class Query(object):
         many-to-one joins will always create a new alias (necessary for
         disjunctive filters). If can_reuse is not None, it's a list of aliases
         that can be reused in these joins (nothing else can be reused in this
-        case).
+        case). Finally, 'negate' is used in the same sense as for add_filter()
+        -- it indicates an exclude() filter, or something similar. It is only
+        passed in here so that it can be passed to a field's extra_filter() for
+        customised behaviour.
 
         Returns the final field involved in the join, the target database
         column (used for any 'where' constraint), the final 'opts' value and the
@@ -1271,8 +1316,8 @@ class Query(object):
                 exclusions.update(self.dupe_avoidance.get((id(opts), dupe_col),
                         ()))
 
-            if hasattr(field, 'extra_filters'):
-                extra_filters.append(field.extra_filters(names, pos))
+            if process_extras and hasattr(field, 'extra_filters'):
+                extra_filters.extend(field.extra_filters(names, pos, negate))
             if direct:
                 if m2m:
                     # Many-to-many field defined on the current model.
@@ -1295,10 +1340,15 @@ class Query(object):
                     int_alias = self.join((alias, table1, from_col1, to_col1),
                             dupe_multis, exclusions, nullable=True,
                             reuse=can_reuse)
-                    alias = self.join((int_alias, table2, from_col2, to_col2),
-                            dupe_multis, exclusions, nullable=True,
-                            reuse=can_reuse)
-                    joins.extend([int_alias, alias])
+                    if int_alias == table2 and from_col2 == to_col2:
+                        joins.append(int_alias)
+                        alias = int_alias
+                    else:
+                        alias = self.join(
+                                (int_alias, table2, from_col2, to_col2),
+                                dupe_multis, exclusions, nullable=True,
+                                reuse=can_reuse)
+                        joins.extend([int_alias, alias])
                 elif field.rel:
                     # One-to-one or many-to-one field
                     if cached_data:
@@ -1391,7 +1441,7 @@ class Query(object):
             except KeyError:
                 self.dupe_avoidance[ident, name] = set([alias])
 
-    def split_exclude(self, filter_expr, prefix):
+    def split_exclude(self, filter_expr, prefix, can_reuse):
         """
         When doing an exclude against any kind of N-to-many relation, we need
         to use a subquery. This method constructs the nested query, given the
@@ -1399,10 +1449,12 @@ class Query(object):
         N-to-many relation field.
         """
         query = Query(self.model, self.connection)
-        query.add_filter(filter_expr)
+        query.add_filter(filter_expr, can_reuse=can_reuse)
+        query.bump_prefix()
         query.set_start(prefix)
         query.clear_ordering(True)
-        self.add_filter(('%s__in' % prefix, query), negate=True, trim=True)
+        self.add_filter(('%s__in' % prefix, query), negate=True, trim=True,
+                can_reuse=can_reuse)
 
     def set_limits(self, low=None, high=None):
         """
@@ -1460,12 +1512,7 @@ class Query(object):
                         final_alias = join[LHS_ALIAS]
                         col = join[LHS_JOIN_COL]
                         joins = joins[:-1]
-                promote = False
-                for join in joins[1:]:
-                    # Only nullable aliases are promoted, so we don't end up
-                    # doing unnecessary left outer joins here.
-                    if self.promote_alias(join, promote):
-                        promote = True
+                self.promote_alias_chain(joins[1:])
                 self.select.append((final_alias, col))
                 self.select_fields.append(field)
         except MultiJoin:
@@ -1614,6 +1661,7 @@ class Query(object):
         alias = self.get_initial_alias()
         field, col, opts, joins, last, extra = self.setup_joins(
                 start.split(LOOKUP_SEP), opts, alias, False)
+        self.unref_alias(alias)
         alias = joins[last[-1]]
         self.select = [(alias, self.alias_map[alias][RHS_JOIN_COL])]
         self.select_fields = [field]

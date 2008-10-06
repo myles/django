@@ -125,20 +125,31 @@ class RelatedField(object):
             # that object. In certain conditions (especially one-to-one relations),
             # the primary key may itself be an object - so we need to keep drilling
             # down until we hit a value that can be used for a comparison.
-            v = value
+            v, field = value, None
             try:
                 while True:
-                    v = getattr(v, v._meta.pk.name)
+                    v, field = getattr(v, v._meta.pk.name), v._meta.pk
             except AttributeError:
                 pass
+            if field:
+                if lookup_type in ('range', 'in'):
+                    v = [v]
+                v = field.get_db_prep_lookup(lookup_type, v)
+                if isinstance(v, list):
+                    v = v[0]
             return v
 
         if hasattr(value, 'as_sql'):
             sql, params = value.as_sql()
             return QueryWrapper(('(%s)' % sql), params)
-        if lookup_type == 'exact':
+
+        # FIXME: lt and gt are explicitally allowed to make
+        # get_(next/prev)_by_date work; other lookups are not allowed since that
+        # gets messy pretty quick. This is a good candidate for some refactoring
+        # in the future.
+        if lookup_type in ['exact', 'gt', 'lt']:
             return [pk_trace(value)]
-        if lookup_type == 'in':
+        if lookup_type in ('range', 'in'):
             return [pk_trace(v) for v in value]
         elif lookup_type == 'isnull':
             return []
@@ -295,9 +306,8 @@ class ForeignRelatedObjectsDescriptor(object):
             add.alters_data = True
 
             def create(self, **kwargs):
-                new_obj = self.model(**kwargs)
-                self.add(new_obj)
-                return new_obj
+                kwargs.update({rel_field.name: instance})
+                return super(RelatedManager, self).create(**kwargs)
             create.alters_data = True
 
             def get_or_create(self, **kwargs):
@@ -399,8 +409,7 @@ def create_many_related_manager(superclass, through=False):
             # from the method lookup table, as we do with add and remove.
             if through is not None:
                 raise AttributeError, "Cannot use create() on a ManyToManyField which specifies an intermediary model. Use %s's Manager instead." % through
-            new_obj = self.model(**kwargs)
-            new_obj.save()
+            new_obj = super(ManyRelatedManager, self).create(**kwargs)
             self.add(new_obj)
             return new_obj
         create.alters_data = True
@@ -680,7 +689,12 @@ class ForeignKey(RelatedField, Field):
         setattr(cls, related.get_accessor_name(), ForeignRelatedObjectsDescriptor(related))
 
     def formfield(self, **kwargs):
-        defaults = {'form_class': forms.ModelChoiceField, 'queryset': self.rel.to._default_manager.complex_filter(self.rel.limit_choices_to)}
+        defaults = {
+            'form_class': forms.ModelChoiceField,
+            'queryset': self.rel.to._default_manager.complex_filter(
+                                                    self.rel.limit_choices_to),
+            'to_field_name': self.rel.field_name,
+        }
         defaults.update(kwargs)
         return super(ForeignKey, self).formfield(**defaults)
 
@@ -689,8 +703,13 @@ class ForeignKey(RelatedField, Field):
         # of the field to which it points. An exception is if the ForeignKey
         # points to an AutoField/PositiveIntegerField/PositiveSmallIntegerField,
         # in which case the column type is simply that of an IntegerField.
+        # If the database needs similar types for key fields however, the only
+        # thing we can do is making AutoField an IntegerField.
         rel_field = self.rel.get_related_field()
-        if isinstance(rel_field, (AutoField, PositiveIntegerField, PositiveSmallIntegerField)):
+        if (isinstance(rel_field, AutoField) or
+                (not connection.features.related_fields_match_type and
+                isinstance(rel_field, (PositiveIntegerField,
+                                       PositiveSmallIntegerField)))):
             return IntegerField().db_type()
         return rel_field.db_type()
 
@@ -710,7 +729,7 @@ class OneToOneField(ForeignKey):
                 SingleRelatedObjectDescriptor(related))
         if not cls._meta.one_to_one_field:
             cls._meta.one_to_one_field = self
-    
+
     def formfield(self, **kwargs):
         if self.rel.parent_link:
             return None
@@ -838,6 +857,15 @@ class ManyToManyField(RelatedField, Field):
         return smart_unicode(data)
 
     def contribute_to_class(self, cls, name):
+        # To support multiple relations to self, it's useful to have a non-None
+        # related name on symmetrical relations for internal reasons. The
+        # concept doesn't make a lot of sense externally ("you want me to
+        # specify *what* on my non-reversible relation?!"), so we set it up
+        # automatically. The funky name reduces the chance of an accidental
+        # clash.
+        if self.rel.symmetrical and self.rel.to == "self" and self.rel.related_name is None:
+            self.rel.related_name = "%s_rel_+" % name
+
         super(ManyToManyField, self).contribute_to_class(cls, name)
         # Add the descriptor for the m2m relation
         setattr(cls, self.name, ReverseManyRelatedObjectsDescriptor(self))

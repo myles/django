@@ -95,6 +95,8 @@ class CollectedObjects(object):
         while len(dealt_with) < len(models):
             found = False
             for model in models:
+                if model in dealt_with:
+                    continue
                 children = self.children.setdefault(model, [])
                 if len([c for c in children if c not in dealt_with]) == 0:
                     dealt_with[model] = None
@@ -308,7 +310,7 @@ class QuerySet(object):
         and returning the created object.
         """
         obj = self.model(**kwargs)
-        obj.save()
+        obj.save(force_insert=True)
         return obj
 
     def get_or_create(self, **kwargs):
@@ -328,7 +330,7 @@ class QuerySet(object):
                 params.update(defaults)
                 obj = self.model(**params)
                 sid = transaction.savepoint()
-                obj.save()
+                obj.save(force_insert=True)
                 transaction.savepoint_commit(sid)
                 return obj, True
             except IntegrityError, e:
@@ -737,7 +739,7 @@ class DateQuerySet(QuerySet):
         self.query.select = []
         field = self.model._meta.get_field(self._field_name, many_to_many=False)
         assert isinstance(field, DateField), "%r isn't a DateField." \
-                % field_name
+                % field.name
         self.query.add_date_select(field, self._kind, self._order)
         if field.null:
             self.query.add_filter(('%s__isnull' % field.name, False))

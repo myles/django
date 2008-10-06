@@ -205,7 +205,7 @@ class Field(object):
         elif lookup_type in ('contains', 'icontains'):
             return ["%%%s%%" % connection.ops.prep_for_like_query(value)]
         elif lookup_type == 'iexact':
-            return [connection.ops.prep_for_like_query(value)]
+            return [connection.ops.prep_for_iexact_query(value)]
         elif lookup_type in ('startswith', 'istartswith'):
             return ["%s%%" % connection.ops.prep_for_like_query(value)]
         elif lookup_type in ('endswith', 'iendswith'):
@@ -231,7 +231,7 @@ class Field(object):
 
     def get_default(self):
         "Returns the default value for this field."
-        if self.default is not NOT_PROVIDED:
+        if self.has_default():
             if callable(self.default):
                 return self.default()
             return force_unicode(self.default, strings_only=True)
@@ -304,10 +304,26 @@ class Field(object):
     def formfield(self, form_class=forms.CharField, **kwargs):
         "Returns a django.forms.Field instance for this database Field."
         defaults = {'required': not self.blank, 'label': capfirst(self.verbose_name), 'help_text': self.help_text}
-        if self.choices:
-            defaults['widget'] = forms.Select(choices=self.get_choices(include_blank=self.blank or not (self.has_default() or 'initial' in kwargs)))
         if self.has_default():
             defaults['initial'] = self.get_default()
+            if callable(self.default):
+                defaults['show_hidden_initial'] = True
+        if self.choices:
+            # Fields with choices get special treatment. 
+            include_blank = self.blank or not (self.has_default() or 'initial' in kwargs)
+            defaults['choices'] = self.get_choices(include_blank=include_blank)
+            defaults['coerce'] = self.to_python
+            if self.null:
+                defaults['empty_value'] = None
+            form_class = forms.TypedChoiceField
+            # Many of the subclass-specific formfield arguments (min_value,
+            # max_value) don't apply for choice fields, so be sure to only pass
+            # the values that TypedChoiceField will understand.
+            for k in kwargs.keys():
+                if k not in ('coerce', 'empty_value', 'choices', 'required',
+                             'widget', 'label', 'initial', 'help_text',
+                             'error_messages'):
+                    del kwargs[k]
         defaults.update(kwargs)
         return form_class(**defaults)
 
@@ -362,6 +378,15 @@ class BooleanField(Field):
         raise exceptions.ValidationError(
             _("This value must be either True or False."))
 
+    def get_db_prep_lookup(self, lookup_type, value):
+        # Special-case handling for filters coming from a web request (e.g. the
+        # admin interface). Only works for scalar values (not lists). If you're
+        # passing in a list, you might as well make things the right type when
+        # constructing the list.
+        if value in ('1', '0'):
+            value = bool(int(value))
+        return super(BooleanField, self).get_db_prep_lookup(lookup_type, value)
+
     def get_db_prep_value(self, value):
         if value is None:
             return None
@@ -394,7 +419,17 @@ class CharField(Field):
 
 # TODO: Maybe move this into contrib, because it's specialized.
 class CommaSeparatedIntegerField(CharField):
-    pass
+    def formfield(self, **kwargs):
+        defaults = {
+            'form_class': forms.RegexField,
+            'regex': '^[\d,]+$',
+            'max_length': self.max_length,
+            'error_messages': {
+                'invalid': _(u'Enter only digits separated by commas.'),
+            }
+        }
+        defaults.update(kwargs)
+        return super(CommaSeparatedIntegerField, self).formfield(**defaults)
 
 ansi_date_re = re.compile(r'^\d{4}-\d{1,2}-\d{1,2}$')
 
@@ -677,11 +712,20 @@ class NullBooleanField(Field):
 
     def to_python(self, value):
         if value in (None, True, False): return value
-        if value in ('None'): return None
+        if value in ('None',): return None
         if value in ('t', 'True', '1'): return True
         if value in ('f', 'False', '0'): return False
         raise exceptions.ValidationError(
             _("This value must be either None, True or False."))
+
+    def get_db_prep_lookup(self, lookup_type, value):
+        # Special-case handling for filters coming from a web request (e.g. the
+        # admin interface). Only works for scalar values (not lists). If you're
+        # passing in a list, you might as well make things the right type when
+        # constructing the list.
+        if value in ('1', '0'):
+            value = bool(int(value))
+        return super(NullBooleanField, self).get_db_prep_lookup(lookup_type, value)
 
     def get_db_prep_value(self, value):
         if value is None:
@@ -696,16 +740,6 @@ class NullBooleanField(Field):
             'help_text': self.help_text}
         defaults.update(kwargs)
         return super(NullBooleanField, self).formfield(**defaults)
-
-class PhoneNumberField(Field):
-    def get_internal_type(self):
-        return "PhoneNumberField"
-
-    def formfield(self, **kwargs):
-        from django.contrib.localflavor.us.forms import USPhoneNumberField
-        defaults = {'form_class': USPhoneNumberField}
-        defaults.update(kwargs)
-        return super(PhoneNumberField, self).formfield(**defaults)
 
 class PositiveIntegerField(IntegerField):
     def get_internal_type(self):
@@ -831,16 +865,6 @@ class URLField(CharField):
         defaults = {'form_class': forms.URLField, 'verify_exists': self.verify_exists}
         defaults.update(kwargs)
         return super(URLField, self).formfield(**defaults)
-
-class USStateField(Field):
-    def get_internal_type(self):
-        return "USStateField"
-
-    def formfield(self, **kwargs):
-        from django.contrib.localflavor.us.forms import USStateSelect
-        defaults = {'widget': USStateSelect}
-        defaults.update(kwargs)
-        return super(USStateField, self).formfield(**defaults)
 
 class XMLField(TextField):
     def __init__(self, verbose_name=None, name=None, schema_path=None, **kwargs):

@@ -31,6 +31,7 @@ class BaseModelAdmin(object):
     """Functionality common to both ModelAdmin and InlineAdmin."""
     raw_id_fields = ()
     fields = None
+    exclude = None
     fieldsets = None
     form = forms.ModelForm
     filter_vertical = ()
@@ -51,12 +52,12 @@ class BaseModelAdmin(object):
         if db_field.choices:
             if db_field.name in self.radio_fields:
                 # If the field is named as a radio_field, use a RadioSelect
-                kwargs['widget'] = widgets.AdminRadioSelect(
-                    choices=db_field.get_choices(include_blank=db_field.blank,
-                        blank_choice=[('', _('None'))]),
-                    attrs={
-                        'class': get_ul_class(self.radio_fields[db_field.name]),
-                    }
+                kwargs['widget'] = widgets.AdminRadioSelect(attrs={
+                    'class': get_ul_class(self.radio_fields[db_field.name]),
+                })
+                kwargs['choices'] = db_field.get_choices(
+                    include_blank = db_field.blank,
+                    blank_choice=[('', _('None'))]
                 )
                 return db_field.formfield(**kwargs)
             else:
@@ -92,6 +93,11 @@ class BaseModelAdmin(object):
         # For IntegerFields, add a custom CSS class.
         if isinstance(db_field, models.IntegerField):
             kwargs['widget'] = widgets.AdminIntegerFieldWidget
+            return db_field.formfield(**kwargs)
+
+        # For CommaSeparatedIntegerFields, add a custom CSS class.
+        if isinstance(db_field, models.CommaSeparatedIntegerField):
+            kwargs['widget'] = widgets.AdminCommaSeparatedIntegerFieldWidget
             return db_field.formfield(**kwargs)
 
         # For TextInputs, add a custom CSS class.
@@ -181,11 +187,11 @@ class ModelAdmin(BaseModelAdmin):
         # Delegate to the appropriate method, based on the URL.
         if url is None:
             return self.changelist_view(request)
-        elif url.endswith('add'):
+        elif url == "add":
             return self.add_view(request)
-        elif url.endswith('history'):
+        elif url.endswith('/history'):
             return self.history_view(request, unquote(url[:-8]))
-        elif url.endswith('delete'):
+        elif url.endswith('/delete'):
             return self.delete_view(request, unquote(url[:-7]))
         else:
             return self.change_view(request, unquote(url))
@@ -198,8 +204,6 @@ class ModelAdmin(BaseModelAdmin):
             js.append('js/urlify.js')
         if self.opts.get_ordered_objects():
             js.extend(['js/getElementsBySelector.js', 'js/dom-drag.js' , 'js/admin/ordering.js'])
-        if self.filter_vertical or self.filter_horizontal:
-            js.extend(['js/SelectBox.js' , 'js/SelectFilter2.js'])
 
         return forms.Media(js=['%s%s' % (settings.ADMIN_MEDIA_PREFIX, url) for url in js])
     media = property(_media)
@@ -259,9 +263,14 @@ class ModelAdmin(BaseModelAdmin):
             fields = flatten_fieldsets(self.declared_fieldsets)
         else:
             fields = None
+        if self.exclude is None:
+            exclude = []
+        else:
+            exclude = self.exclude
         defaults = {
             "form": self.form,
             "fields": fields,
+            "exclude": exclude + kwargs.get("exclude", []),
             "formfield_callback": self.formfield_for_dbfield,
         }
         defaults.update(kwargs)
@@ -498,7 +507,17 @@ class ModelAdmin(BaseModelAdmin):
                 self.log_addition(request, new_object)
                 return self.response_add(request, new_object)
         else:
-            form = ModelForm(initial=dict(request.GET.items()))
+            # Prepare the dict of initial data from the request.
+            # We have to special-case M2Ms as a list of comma-separated PKs.
+            initial = dict(request.GET.items())
+            for k in initial:
+                try:
+                    f = opts.get_field(k)
+                except models.FieldDoesNotExist:
+                    continue
+                if isinstance(f, models.ManyToManyField):
+                    initial[k] = initial[k].split(",")
+            form = ModelForm(initial=initial)
             for FormSet in self.get_formsets(request):
                 formset = FormSet(instance=self.model())
                 formsets.append(formset)
@@ -767,11 +786,16 @@ class InlineModelAdmin(BaseModelAdmin):
             fields = flatten_fieldsets(self.declared_fieldsets)
         else:
             fields = None
+        if self.exclude is None:
+            exclude = []
+        else:
+            exclude = self.exclude
         defaults = {
             "form": self.form,
             "formset": self.formset,
             "fk_name": self.fk_name,
             "fields": fields,
+            "exclude": exclude + kwargs.get("exclude", []),
             "formfield_callback": self.formfield_for_dbfield,
             "extra": self.extra,
             "max_num": self.max_num,

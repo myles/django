@@ -20,8 +20,18 @@ class AdminForm(object):
             yield Fieldset(self.form, name, **options)
 
     def first_field(self):
-        for bf in self.form:
-            return bf
+        try:
+            fieldset_name, fieldset_options = self.fieldsets[0]
+            field_name = fieldset_options['fields'][0]
+            if not isinstance(field_name, basestring):
+                field_name = field_name[0]
+            return self.form[field_name]
+        except (KeyError, IndexError):
+            pass
+        try:
+            return iter(self.form).next()
+        except StopIteration:
+            return None
 
     def _media(self):
         media = self.form.media
@@ -121,7 +131,7 @@ class InlineAdminForm(AdminForm):
         super(InlineAdminForm, self).__init__(form, fieldsets, prepopulated_fields)
 
     def pk_field(self):
-        return AdminField(self.form, self.formset._pk_field_name, False)
+        return AdminField(self.form, self.formset._pk_field.name, False)
 
     def deletion_field(self):
         from django.forms.formsets import DELETION_FIELD_NAME

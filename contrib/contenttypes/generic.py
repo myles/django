@@ -24,11 +24,10 @@ class GenericForeignKey(object):
         self.fk_field = fk_field
 
     def contribute_to_class(self, cls, name):
-        # Make sure the fields exist (these raise FieldDoesNotExist,
-        # which is a fine error to raise here)
         self.name = name
         self.model = cls
         self.cache_attr = "_%s_cache" % name
+        cls._meta.add_virtual_field(self)
 
         # For some reason I don't totally understand, using weakrefs here doesn't work.
         signals.pre_init.connect(self.instance_pre_init, sender=cls, weak=False)
@@ -157,15 +156,18 @@ class GenericRelation(RelatedField, Field):
         # same db_type as well.
         return None
 
-    def extra_filters(self, pieces, pos):
+    def extra_filters(self, pieces, pos, negate):
         """
         Return an extra filter to the queryset so that the results are filtered
         on the appropriate content type.
         """
+        if negate:
+            return []
         ContentType = get_model("contenttypes", "contenttype")
         content_type = ContentType.objects.get_for_model(self.model)
         prefix = "__".join(pieces[:pos + 1])
-        return "%s__%s" % (prefix, self.content_type_field_name), content_type
+        return [("%s__%s" % (prefix, self.content_type_field_name),
+            content_type)]
 
 class ReverseGenericRelatedObjectsDescriptor(object):
     """
@@ -269,9 +271,7 @@ def create_generic_related_manager(superclass):
         def create(self, **kwargs):
             kwargs[self.content_type_field_name] = self.content_type
             kwargs[self.object_id_field_name] = self.pk_val
-            obj = self.model(**kwargs)
-            obj.save()
-            return obj
+            return super(GenericRelatedObjectManager, self).create(**kwargs)
         create.alters_data = True
 
     return GenericRelatedObjectManager

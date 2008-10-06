@@ -52,8 +52,8 @@ class HttpRequest(object):
         else:
             # Reconstruct the host using the algorithm from PEP 333.
             host = self.META['SERVER_NAME']
-            server_port = self.META['SERVER_PORT']
-            if server_port != (self.is_secure() and 443 or 80):
+            server_port = str(self.META['SERVER_PORT'])
+            if server_port != (self.is_secure() and '443' or '80'):
                 host = '%s:%s' % (host, server_port)
         return host
 
@@ -211,8 +211,13 @@ class QueryDict(MultiValueDict):
     def update(self, other_dict):
         self._assert_mutable()
         f = lambda s: str_to_unicode(s, self.encoding)
-        d = dict([(f(k), f(v)) for k, v in other_dict.items()])
-        MultiValueDict.update(self, d)
+        if hasattr(other_dict, 'lists'):
+            for key, valuelist in other_dict.lists():
+                for value in valuelist:
+                    MultiValueDict.update(self, {f(key): f(value)})
+        else:
+            d = dict([(f(k), f(v)) for k, v in other_dict.items()])
+            MultiValueDict.update(self, d)
 
     def pop(self, key, *args):
         self._assert_mutable()

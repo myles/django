@@ -26,6 +26,7 @@ DEFAULT_NAMES = ('verbose_name', 'db_table', 'ordering',
 class Options(object):
     def __init__(self, meta, app_label=None):
         self.local_fields, self.local_many_to_many = [], []
+        self.virtual_fields = []
         self.module_name, self.verbose_name = None, None
         self.verbose_name_plural = None
         self.db_table = ''
@@ -44,6 +45,9 @@ class Options(object):
         self.abstract = False
         self.parents = SortedDict()
         self.duplicate_targets = {}
+        # Managers that have been inherited from abstract base classes. These
+        # are passed onto any children.
+        self.abstract_managers = []
 
     def contribute_to_class(self, cls, name):
         from django.db import connection
@@ -151,6 +155,9 @@ class Options(object):
 
         if hasattr(self, '_name_map'):
             del self._name_map
+
+    def add_virtual_field(self, field):
+        self.virtual_fields.append(field)
 
     def setup_pk(self, field):
         if not self.pk and field.primary_key:
@@ -280,7 +287,9 @@ class Options(object):
     def get_all_field_names(self):
         """
         Returns a list of all field names that are possible for this model
-        (including reverse relation names).
+        (including reverse relation names). This is used for pretty printing
+        debugging output (a list of choices), so any internal-only field names
+        are not included.
         """
         try:
             cache = self._name_map
@@ -288,7 +297,9 @@ class Options(object):
             cache = self.init_name_map()
         names = cache.keys()
         names.sort()
-        return names
+        # Internal-only names end with "+" (symmetrical m2m related names being
+        # the main example). Trim them.
+        return [val for val in names if not val.endswith('+')]
 
     def init_name_map(self):
         """

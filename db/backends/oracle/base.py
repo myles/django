@@ -23,7 +23,7 @@ from django.db.backends.oracle.creation import DatabaseCreation
 from django.db.backends.oracle.introspection import DatabaseIntrospection
 from django.utils.encoding import smart_str, force_unicode
 
-DatabaseError = Database.Error
+DatabaseError = Database.DatabaseError
 IntegrityError = Database.IntegrityError
 
 
@@ -105,6 +105,9 @@ class DatabaseOperations(BaseDatabaseOperations):
 
     def max_name_length(self):
         return 30
+
+    def prep_for_iexact_query(self, x):
+        return x
 
     def query_class(self, DefaultQueryClass):
         return query.query_class(DefaultQueryClass, Database)

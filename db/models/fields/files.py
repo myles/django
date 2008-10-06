@@ -54,6 +54,11 @@ class FieldFile(File):
         return self.storage.url(self.name)
     url = property(_get_url)
 
+    def _get_size(self):
+        self._require_file()
+        return self.storage.size(self.name)
+    size = property(_get_size)
+
     def open(self, mode='rb'):
         self._require_file()
         return super(FieldFile, self).open(mode)
@@ -78,7 +83,12 @@ class FieldFile(File):
     save.alters_data = True
 
     def delete(self, save=True):
-        self.close()
+        # Only close the file if it's already open, which we know by the
+        # presence of self._file
+        if hasattr(self, '_file'):
+            self.close()
+            del self._file
+            
         self.storage.delete(self.name)
 
         self._name = None
@@ -167,26 +177,6 @@ class FileField(Field):
         elif file:
             # Otherwise, just close the file, so it doesn't tie up resources.
             file.close()
-
-    def save_file(self, new_data, new_object, original_object, change, rel,
-                  save=True):
-        upload_field_name = self.name + '_file'
-        if new_data.get(upload_field_name, False):
-            if rel:
-                file = new_data[upload_field_name][0]
-            else:
-                file = new_data[upload_field_name]
-
-            # Backwards-compatible support for files-as-dictionaries.
-            # We don't need to raise a warning because the storage backend will
-            # do so for us.
-            try:
-                filename = file.name
-            except AttributeError:
-                filename = file['filename']
-            filename = self.get_filename(filename)
-
-            getattr(new_object, self.attname).save(filename, file, save)
 
     def get_directory_name(self):
         return os.path.normpath(force_unicode(datetime.datetime.now().strftime(smart_str(self.upload_to))))
