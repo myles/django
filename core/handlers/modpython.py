@@ -13,9 +13,30 @@ class ModPythonRequest(httpwrappers.HttpRequest):
         self.path = req.uri
 
     def __repr__(self):
+        # Since this is called as part of error handling, we need to be very
+        # robust against potentially malformed input.
+        try:
+            get = pformat(self.GET)
+        except:
+            get = '<could not parse>'
+        try:
+            post = pformat(self.POST)
+        except:
+            post = '<could not parse>'
+        try:
+            cookies = pformat(self.COOKIES)
+        except:
+            cookies = '<could not parse>'
+        try:
+            meta = pformat(self.META)
+        except:
+            meta = '<could not parse>'
+        try:
+            user = self.user
+        except:
+            user = '<could not parse>'
         return '<ModPythonRequest\npath:%s,\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s,\nuser:%s>' % \
-            (self.path, pformat(self.GET), pformat(self.POST), pformat(self.COOKIES),
-            pformat(self.META), pformat(self.user))
+               (self.path, get, post, cookies, meta, user)
 
     def get_full_path(self):
         return '%s%s' % (self.path, self._req.args and ('?' + self._req.args) or '')
@@ -130,6 +151,10 @@ class ModPythonHandler(BaseHandler):
         from django.conf import settings
         from django.core import db
 
+        if settings.ENABLE_PSYCO:
+            import psyco
+            psyco.profile()
+
         # if we need to set up middleware, now that settings works we can do it now.
         if self._request_middleware is None:
             self.load_middleware()
@@ -137,12 +162,11 @@ class ModPythonHandler(BaseHandler):
         try:
             request = ModPythonRequest(req)
             response = self.get_response(req.uri, request)
+            # Apply response middleware
+            for middleware_method in self._response_middleware:
+                response = middleware_method(request, response)
         finally:
             db.db.close()
-
-        # Apply response middleware
-        for middleware_method in self._response_middleware:
-            response = middleware_method(request, response)
 
         # Convert our custom HttpResponse object back into the mod_python req.
         populate_apache_request(response, req)
@@ -158,7 +182,8 @@ def populate_apache_request(http_response, mod_python_req):
     for c in http_response.cookies.values():
         mod_python_req.headers_out.add('Set-Cookie', c.output(header=''))
     mod_python_req.status = http_response.status_code
-    mod_python_req.write(http_response.get_content_as_string(settings.DEFAULT_CHARSET))
+    for chunk in http_response.iterator:
+        mod_python_req.write(chunk)
 
 def handler(req):
     # mod_python hooks into this function.

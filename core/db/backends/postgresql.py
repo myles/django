@@ -9,13 +9,61 @@ import psycopg as Database
 
 DatabaseError = Database.DatabaseError
 
-class DatabaseWrapper:
+try:
+    # Only exists in python 2.4+
+    from threading import local
+except ImportError:
+    # Import copy of _thread_local.py from python 2.4
+    from django.utils._threading_local import local
+
+def smart_basestring(s, charset):
+    if isinstance(s, unicode):
+        return s.encode(charset)
+    return s
+
+class UnicodeCursorWrapper(object):
+    """
+    A thin wrapper around psycopg cursors that allows them to accept Unicode
+    strings as params.
+
+    This is necessary because psycopg doesn't apply any DB quoting to
+    parameters that are Unicode strings. If a param is Unicode, this will
+    convert it to a bytestring using DEFAULT_CHARSET before passing it to
+    psycopg.
+    """
+    def __init__(self, cursor, charset):
+        self.cursor = cursor
+        self.charset = charset
+
+    def execute(self, sql, params=()):
+        try:
+            params = dict([(k, smart_basestring(v, self.charset)) for (k, v) in params.items()])
+        except AttributeError:
+            params = [smart_basestring(p, self.charset) for p in params]
+        return self.cursor.execute(sql, params)
+
+    def executemany(self, sql, param_list):
+        try:
+            new_param_list = [dict([(k, smart_basestring(v, self.charset)) for (k, v) in params.items()])
+                              for params in param_list]
+        except AttributeError:
+            new_param_list = [tuple([smart_basestring(p, self.charset) for p in params])
+                              for params in param_list]
+        return self.cursor.executemany(sql, new_param_list)
+
+    def __getattr__(self, attr):
+        if self.__dict__.has_key(attr):
+            return self.__dict__[attr]
+        else:
+            return getattr(self.cursor, attr)
+
+class DatabaseWrapper(local):
     def __init__(self):
         self.connection = None
         self.queries = []
 
     def cursor(self):
-        from django.conf.settings import DATABASE_USER, DATABASE_NAME, DATABASE_HOST, DATABASE_PORT, DATABASE_PASSWORD, DEBUG, TIME_ZONE
+        from django.conf.settings import DATABASE_USER, DATABASE_NAME, DATABASE_HOST, DATABASE_PORT, DATABASE_PASSWORD, DEBUG, DEFAULT_CHARSET, TIME_ZONE
         if self.connection is None:
             if DATABASE_NAME == '':
                 from django.core.exceptions import ImproperlyConfigured
@@ -33,6 +81,7 @@ class DatabaseWrapper:
             self.connection.set_isolation_level(1) # make transactions transparent to all cursors
         cursor = self.connection.cursor()
         cursor.execute("SET TIME ZONE %s", [TIME_ZONE])
+        cursor = UnicodeCursorWrapper(cursor, DEFAULT_CHARSET)
         if DEBUG:
             return base.CursorDebugWrapper(cursor, self)
         return cursor
@@ -126,6 +175,36 @@ def get_relations(cursor, table_name):
             continue
     return relations
 
+def get_indexes(cursor, table_name):
+    """
+    Returns a dictionary of fieldname -> infodict for the given table,
+    where each infodict is in the format:
+        {'primary_key': boolean representing whether it's the primary key,
+         'unique': boolean representing whether it's a unique index}
+    """
+    # Get the table description because we only have the column indexes, and we
+    # need the column names.
+    desc = get_table_description(cursor, table_name)
+    # This query retrieves each index on the given table.
+    cursor.execute("""
+        SELECT idx.indkey, idx.indisunique, idx.indisprimary
+        FROM pg_catalog.pg_class c, pg_catalog.pg_class c2,
+            pg_catalog.pg_index idx
+        WHERE c.oid = idx.indrelid
+            AND idx.indexrelid = c2.oid
+            AND c.relname = %s""", [table_name])
+    indexes = {}
+    for row in cursor.fetchall():
+        # row[0] (idx.indkey) is stored in the DB as an array. It comes out as
+        # a string of space-separated integers. This designates the field
+        # indexes (1-based) of the fields that have indexes on the table.
+        # Here, we skip any indexes across multiple fields.
+        if ' ' in row[0]:
+            continue
+        col_name = desc[int(row[0])-1][0]
+        indexes[col_name] = {'primary_key': row[2], 'unique': row[1]}
+    return indexes
+
 # Register these custom typecasts, because Django expects dates/times to be
 # in Python's native (standard-library) datetime/time format, whereas psycopg
 # use mx.DateTime by default.
@@ -176,7 +255,7 @@ DATA_TYPES = {
     'PhoneNumberField':  'varchar(20)',
     'PositiveIntegerField': 'integer CHECK ("%(column)s" >= 0)',
     'PositiveSmallIntegerField': 'smallint CHECK ("%(column)s" >= 0)',
-    'SlugField':         'varchar(50)',
+    'SlugField':         'varchar(%(maxlength)s)',
     'SmallIntegerField': 'smallint',
     'TextField':         'text',
     'TimeField':         'time',

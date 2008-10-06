@@ -4,7 +4,7 @@ from django.contrib.admin.views.main import IS_POPUP_VAR, EMPTY_CHANGELIST_VALUE
 from django.core import meta, template
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import dateformat
-from django.utils.html import strip_tags, escape
+from django.utils.html import escape
 from django.utils.text import capfirst
 from django.utils.translation import get_date_formats
 from django.conf.settings import ADMIN_MEDIA_PREFIX
@@ -14,7 +14,6 @@ register = Library()
 
 DOT = '.'
 
-#@register.simple_tag
 def paginator_number(cl,i):
     if i == DOT:
        return '... '
@@ -24,7 +23,6 @@ def paginator_number(cl,i):
        return '<a href="%s"%s>%d</a> ' % (cl.get_query_string({PAGE_VAR: i}), (i == cl.paginator.pages-1 and ' class="end"' or ''), i+1)
 paginator_number = register.simple_tag(paginator_number)
 
-#@register.inclusion_tag('admin/pagination')
 def pagination(cl):
     paginator, page_num = cl.paginator, cl.page_num
 
@@ -81,7 +79,7 @@ def result_headers(cl):
             if field_name == '__repr__':
                 header = lookup_opts.verbose_name
             else:
-                func = getattr(cl.mod.Klass, field_name) # Let AttributeErrors propogate.
+                func = getattr(cl.mod.Klass, field_name) # Let AttributeErrors propagate.
                 try:
                     header = func.short_description
                 except AttributeError:
@@ -89,7 +87,7 @@ def result_headers(cl):
             # Non-field list_display values don't get ordering capability.
             yield {"text": header}
         else:
-            if isinstance(f.rel, meta.ManyToOne) and f.null:
+            if isinstance(f.rel, meta.ManyToOneRel) and f.null:
                 yield {"text": f.verbose_name}
             else:
                 th_classes = []
@@ -122,11 +120,11 @@ def items_for_result(cl, result):
                 # Strip HTML tags in the resulting text, except if the
                 # function has an "allow_tags" attribute set to True.
                 if not getattr(func, 'allow_tags', False):
-                    result_repr = strip_tags(result_repr)
+                    result_repr = escape(result_repr)
         else:
             field_val = getattr(result, f.attname)
 
-            if isinstance(f.rel, meta.ManyToOne):
+            if isinstance(f.rel, meta.ManyToOneRel):
                 if field_val is not None:
                     result_repr = getattr(result, 'get_%s' % f.name)()
                 else:
@@ -163,7 +161,7 @@ def items_for_result(cl, result):
             elif f.choices:
                 result_repr = dict(f.choices).get(field_val, EMPTY_CHANGELIST_VALUE)
             else:
-                result_repr = strip_tags(str(field_val))
+                result_repr = escape(str(field_val))
         if result_repr == '':
                 result_repr = '&nbsp;'
         if first: # First column is a special case
@@ -179,15 +177,12 @@ def results(cl):
     for res in cl.result_list:
         yield list(items_for_result(cl,res))
 
-#@register.inclusion_tag("admin/change_list_results")
 def result_list(cl):
-    res = list(results(cl))
     return {'cl': cl,
             'result_headers': list(result_headers(cl)),
             'results': list(results(cl))}
 result_list = register.inclusion_tag("admin/change_list_results")(result_list)
 
-#@register.inclusion_tag("admin/date_hierarchy")
 def date_hierarchy(cl):
     lookup_opts, params, lookup_params, lookup_mod = \
       cl.lookup_opts, cl.params, cl.lookup_params, cl.lookup_mod
@@ -260,7 +255,6 @@ def date_hierarchy(cl):
             }
 date_hierarchy = register.inclusion_tag('admin/date_hierarchy')(date_hierarchy)
 
-#@register.inclusion_tag('admin/search_form')
 def search_form(cl):
     return {
         'cl': cl,
@@ -269,12 +263,10 @@ def search_form(cl):
     }
 search_form = register.inclusion_tag('admin/search_form')(search_form)
 
-#@register.inclusion_tag('admin/filter')
 def filter(cl, spec):
     return {'title': spec.title(), 'choices' : list(spec.choices(cl))}
 filter = register.inclusion_tag('admin/filter')(filter)
 
-#@register.inclusion_tag('admin/filters')
 def filters(cl):
     return {'cl': cl}
 filters = register.inclusion_tag('admin/filters')(filters)

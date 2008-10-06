@@ -4,7 +4,7 @@
     Copyright (c) 2005 Lawrence Journal-World
 */
 
-body { margin:0; padding:0; font-family:"Lucida Grande","Bitstream Vera Sans",Verdana,Arial,sans-serif; color:#333; }
+body { margin:0; padding:0; font-family:"Lucida Grande","Bitstream Vera Sans",Verdana,Arial,sans-serif; color:#333; background:#fff; }
 
 /* LINKS */
 a:link, a:visited { color: #5b80b2; text-decoration:none; }
@@ -35,48 +35,31 @@ code, pre { font-family:"Bitstream Vera Sans Mono", Monaco, "Courier New", Couri
 pre.literal-block { margin:10px; background:#eee; padding:6px 8px; }
 code strong	{ color:#930; }
 hr { clear:both; color:#eee; background-color:#eee; height:1px; border:none; margin:0; padding:0; font-size:1px; line-height:1px; }
-div.system-message { background: #ffc; margin: 10px; padding: 6px 8px; font-size: .8em; }
-div.system-message p.system-message-title { padding:4px 5px 4px 25px; margin:0; color:red;background:#ffc url(../img/admin/icon_error.gif) 5px .3em no-repeat; }
 
 /*  PAGE STRUCTURE  */
-#container { position:relative; width:100%; min-width:720px; }
-#header	{ text-align:left; min-height:55px; _height:55px; }
+#container { position:relative; width:100%; min-width:760px; }
 #content { margin:10px 15px; }
-#content-main { float:left; }
-#content-related { float:right; }
+#header { width:100%; }
+#content-main { float:left; width:100%; }
+#content-related { float:right; width:220px; position:relative; margin-right:-230px; }
 #footer	{ clear:both; padding:10px; }
 
 /*  COLUMN TYPES  */
-.colMS, .colM, .colSM, .colM #content-main, .colM #content-main .xfull { width:758px; } /* master site width for fixed-width pages */
-.colMS #content-main, .colSM #content-main, .colMS #content-main .xfull, .colSM #content-main .xfull { width:519px; } /* main column width for 2-column pages */
-.colMS #content-related, .colSM #content-related, .colSMS #content-related { width:220px; } /* sidebar column width */
-.colSM #content-related { float:left; } .colSM #content-main { float:right; } /* swaps left and right columns */
-.colSMS #content-main { width:298px; }
+.colMS { margin-right:245px !important; }
+.colSM { margin-left:245px !important; }
+.colSM #content-related { float:left; margin-right:0; margin-left:-230px; } 
+.colSM #content-main { float:right; }
 .popup .colM { width:95%; }
-.popup #content-main, .flex #content-main, .flex .xfull { width:100% !important; } /* main column width for liquid-width pages */
-.popup .flex #content-main, .popup .colM #content-main { width:100% !important; }
 .subcol { float:left; width:46%; margin-right:15px; }
-
-/*  WIDTHS  */
-.x50 { width:50px; }
-.x75 { width:75px; }
-.x100 { width:100px; }
-.x150 { width:150px; }
-.x200 { width:200px; }
-.x250 { width:250px; }
-.x300 { width:300px; }
-.x400 { width:400px; }
-.x500 { width:500px; }
+.dashboard #content { width:500px; }
 
 /*  HEADER  */
-#header	{ background:#417690; color:#ffc; }
-#header a:link, #header a:visited	{ color:white; }
+#header	{ background:#417690; color:#ffc; min-height:2.4em; overflow:hidden; }
+#header a:link, #header a:visited { color:white; }
 #header a:hover { text-decoration:underline; }
-#branding { float:left; width:480px; }
-#branding h1 /* client name */ { padding:8px 0 0 10px; margin:0; font-size:18px; font-weight:normal; color:#f4f379; }
-#branding h2 /* site name */ { font-size:14px; padding:0 0 8px 10px; margin:0; font-weight:normal; color:#ffc; }
-#user-tools	{ font-size:11px; padding:8px 8px 0 5px; text-align:right; }
-
+#branding h1 { padding:0.5em 10px 0 10px; font-size:18px; margin:0; font-weight:normal; color:#f4f379; }
+#branding h2 { padding:0 10px 0.8em 10px; font-size:14px; margin:0; font-weight:normal; color:#ffc; }
+#user-tools	{ position:absolute; top:0; right:0; padding:1.2em 10px; font-size:11px; text-align:right; }
 
 /*  SIDEBAR  */
 #content-related h3 { font-size:12px; color:#666; margin-bottom:3px; }
@@ -185,6 +168,9 @@ fieldset.collapse h2 a.collapse-toggle { color:#ffc; }
 fieldset.collapse h2 a.collapse-toggle:hover { text-decoration:underline; }
 .hidden { display:none; }
 
+/* MONOSPACE TEXTAREAS */
+fieldset.monospace textarea { font-family:"Bitstream Vera Sans Mono",Monaco,"Courier New",Courier,monospace; }
+
 /* MESSAGES & ERRORS  */
 ul.messagelist { padding:0 0 5px 0; margin:0; }
 ul.messagelist li { font-size:12px; display:block; padding:4px 5px 4px 25px; margin:0 0 3px 0; border-bottom:1px solid #ddd; color:#666; background:#ffc url(../img/admin/icon_success.gif) 5px .3em no-repeat; }
@@ -195,6 +181,8 @@ td ul.errorlist { margin:0 !important; padding:0 !important; }
 td ul.errorlist li { margin:0 !important; }
 .error { background:#ffc; }
 .error input, .error select { border:1px solid red; }
+div.system-message { background: #ffc; margin: 10px; padding: 6px 8px; font-size: .8em; }
+div.system-message p.system-message-title { padding:4px 5px 4px 25px; margin:0; color:red; background:#ffc url(../img/admin/icon_error.gif) 5px .3em no-repeat; }
 
 /*  ACTION ICONS  */
 .addlink { padding-left:12px; background:url(../img/admin/icon_addlink.gif) 0 .2em no-repeat; }
@@ -293,7 +281,7 @@ ul.timelist, .timelist li { list-style-type:none; margin:0; padding:0; }
 .timelist a { padding:2px; }
 
 /*  ORDERING WIDGET  */
-ul#orderthese { padding:0; margin:0; list-style-type:none; }
+ul#orderthese { position:absolute; top:8em; right:0; width:240px; padding:0; margin:0; list-style-type:none; }
 ul#orderthese li { list-style-type:none; display:block; padding:0; margin:6px 0; width:214px; background:#f6f6f6; white-space:nowrap; overflow:hidden; }
 ul#orderthese li span { display:block; border:1px solid #e7e7e7; background:transparent url(../img/admin/nav-bg-grabber.gif) top left repeat-y; font-size:10px !important; padding:4px 6px 4px 12px; }
 ul#orderthese span:hover { background-color:#efefef; }

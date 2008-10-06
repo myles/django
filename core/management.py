@@ -5,6 +5,10 @@ import django
 import os, re, sys, textwrap
 from optparse import OptionParser
 
+# For Python 2.3
+if not hasattr(__builtins__, 'set'):
+    from sets import Set as set
+
 MODULE_TEMPLATE = '''    {%% if perms.%(app)s.%(addperm)s or perms.%(app)s.%(changeperm)s %%}
     <tr>
         <th>{%% if perms.%(app)s.%(changeperm)s %%}<a href="%(app)s/%(mod)s/">{%% endif %%}%(name)s{%% if perms.%(app)s.%(changeperm)s %%}</a>{%% endif %%}</th>
@@ -53,10 +57,19 @@ def _get_contenttype_insert(opts):
 def _is_valid_dir_name(s):
     return bool(re.search(r'^\w+$', s))
 
-# If the foreign key points to an AutoField, the foreign key should be an
-# IntegerField, not an AutoField. Otherwise, the foreign key should be the same
-# type of field as the field to which it points.
-get_rel_data_type = lambda f: (f.get_internal_type() == 'AutoField') and 'IntegerField' or f.get_internal_type()
+# If the foreign key points to an AutoField, a PositiveIntegerField or a
+# PositiveSmallIntegerField, the foreign key should be an IntegerField, not the
+# referred field type. Otherwise, the foreign key should be the same type of
+# field as the field to which it points.
+get_rel_data_type = lambda f: (f.get_internal_type() in ('AutoField', 'PositiveIntegerField', 'PositiveSmallIntegerField')) and 'IntegerField' or f.get_internal_type()
+
+def get_version():
+    "Returns the version as a human-format string."
+    from django import VERSION
+    v = '.'.join([str(i) for i in VERSION[:-1]])
+    if VERSION[3]:
+        v += ' (%s)' % VERSION[3]
+    return v
 
 def get_sql_create(mod):
     "Returns a list of the CREATE TABLE SQL statements for the given module."
@@ -190,8 +203,9 @@ def get_sql_delete(mod):
 
     # Close database connection explicitly, in case this output is being piped
     # directly into a database client, to avoid locking issues.
-    cursor.close()
-    db.db.close()
+    if cursor is not None:
+        cursor.close()
+        db.db.close()
 
     return output[::-1] # Reverse it, to deal with table dependencies.
 get_sql_delete.help_doc = "Prints the DROP TABLE SQL statements for the given model module name(s)."
@@ -556,6 +570,7 @@ def inspectdb(db_name):
     "Generator that introspects the tables in the given database name and returns a Django model, one line at a time."
     from django.core import db
     from django.conf import settings
+    import keyword
 
     def table2model(table_name):
         object_name = table_name.title().replace('_', '')
@@ -566,7 +581,7 @@ def inspectdb(db_name):
     yield "# This is an auto-generated Django model module."
     yield "# You'll have to do the following manually to clean this up:"
     yield "#     * Rearrange models' order"
-    yield "#     * Add primary_key=True to one field in each model."
+    yield "#     * Make sure each model has one field with primary_key=True"
     yield "# Feel free to rename the models, but don't rename db_table values or field names."
     yield "#"
     yield "# Also note: You'll have to insert the output of 'django-admin.py sqlinitialdata [appname]'"
@@ -580,39 +595,71 @@ def inspectdb(db_name):
             relations = db.get_relations(cursor, table_name)
         except NotImplementedError:
             relations = {}
+        try:
+            indexes = db.get_indexes(cursor, table_name)
+        except NotImplementedError:
+            indexes = {}
         for i, row in enumerate(db.get_table_description(cursor, table_name)):
-            column_name = row[0]
+            att_name = row[0]
+            comment_notes = [] # Holds Field notes, to be displayed in a Python comment.
+            extra_params = {}  # Holds Field parameters such as 'db_column'.
+
+            if keyword.iskeyword(att_name):
+                extra_params['db_column'] = att_name
+                att_name += '_field'
+                comment_notes.append('Field renamed because it was a Python reserved word.')
+
             if relations.has_key(i):
-                rel = relations[i]
-                rel_to = rel[1] == table_name and "'self'" or table2model(rel[1])
-                if column_name.endswith('_id'):
-                    field_desc = '%s = meta.ForeignKey(%s' % (column_name[:-3], rel_to)
+                rel_to = relations[i][1] == table_name and "'self'" or table2model(relations[i][1])
+                field_type = 'ForeignKey(%s' % rel_to
+                if att_name.endswith('_id'):
+                    att_name = att_name[:-3]
                 else:
-                    field_desc = '%s = meta.ForeignKey(%s, db_column=%r' % (column_name, rel_to, column_name)
+                    extra_params['db_column'] = att_name
             else:
                 try:
                     field_type = db.DATA_TYPES_REVERSE[row[1]]
                 except KeyError:
                     field_type = 'TextField'
-                    field_type_was_guessed = True
-                else:
-                    field_type_was_guessed = False
+                    comment_notes.append('This field type is a guess.')
 
                 # This is a hook for DATA_TYPES_REVERSE to return a tuple of
                 # (field_type, extra_params_dict).
                 if type(field_type) is tuple:
-                    field_type, extra_params = field_type
-                else:
-                    extra_params = {}
+                    field_type, new_params = field_type
+                    extra_params.update(new_params)
 
+                # Add maxlength for all CharFields.
                 if field_type == 'CharField' and row[3]:
                     extra_params['maxlength'] = row[3]
 
-                field_desc = '%s = meta.%s(' % (column_name, field_type)
-                field_desc += ', '.join(['%s=%s' % (k, v) for k, v in extra_params.items()])
-                field_desc += ')'
-                if field_type_was_guessed:
-                    field_desc += ' # This is a guess!'
+                if field_type == 'FloatField':
+                    extra_params['max_digits'] = row[4]
+                    extra_params['decimal_places'] = row[5]
+
+                # Add primary_key and unique, if necessary.
+                column_name = extra_params.get('db_column', att_name)
+                if column_name in indexes:
+                    if indexes[column_name]['primary_key']:
+                        extra_params['primary_key'] = True
+                    elif indexes[column_name]['unique']:
+                        extra_params['unique'] = True
+
+                field_type += '('
+
+            # Don't output 'id = meta.AutoField(primary_key=True)', because
+            # that's assumed if it doesn't exist.
+            if att_name == 'id' and field_type == 'AutoField(' and extra_params == {'primary_key': True}:
+                continue
+
+            field_desc = '%s = meta.%s' % (att_name, field_type)
+            if extra_params:
+                if not field_desc.endswith('('):
+                    field_desc += ', '
+                field_desc += ', '.join(['%s=%r' % (k, v) for k, v in extra_params.items()])
+            field_desc += ')'
+            if comment_notes:
+                field_desc += ' # ' + ' '.join(comment_notes)
             yield '    %s' % field_desc
         yield '    class META:'
         yield '        db_table = %r' % table_name
@@ -664,6 +711,8 @@ def get_validation_errors(outfile):
                         for c in f.choices:
                             if not type(c) in (tuple, list) or len(c) != 2:
                                 e.add(opts, '"%s" field: "choices" should be a sequence of two-tuples.' % f.name)
+                if f.db_index not in (None, True, False):
+                    e.add(opts, '"%s" field: "db_index" should be either None, True or False.' % f.name)
 
             # Check for multiple ManyToManyFields to the same object, and
             # verify "singular" is set in that case.
@@ -732,7 +781,7 @@ def get_validation_errors(outfile):
                     except meta.FieldDoesNotExist:
                         e.add(opts, '"unique_together" refers to %s, a field that doesn\'t exist. Check your syntax.' % field_name)
                     else:
-                        if isinstance(f.rel, meta.ManyToMany):
+                        if isinstance(f.rel, meta.ManyToManyRel):
                             e.add(opts, '"unique_together" refers to %s. ManyToManyFields are not supported in unique_together.' % f.name)
     return len(e.errors)
 
@@ -755,8 +804,8 @@ def runserver(addr, port):
         from django.conf.settings import SETTINGS_MODULE
         print "Validating models..."
         validate()
-        print "\nStarting server on port %s with settings module %r." % (port, SETTINGS_MODULE)
-        print "Go to http://%s:%s/ for Django." % (addr, port)
+        print "\nDjango version %s, using settings %r" % (get_version(), SETTINGS_MODULE)
+        print "Development server is running at http://%s:%s/" % (addr, port)
         print "Quit the server with CONTROL-C (Unix) or CTRL-BREAK (Windows)."
         try:
             run(addr, int(port), AdminMediaHandler(WSGIHandler()))
@@ -814,11 +863,19 @@ def createcachetable(tablename):
     db.db.commit()
 createcachetable.args = "[tablename]"
 
-def run_shell():
-    "Runs a Python interactive interpreter"
-    import code
-    code.interact()
-run_shell.args = ''
+def run_shell(use_plain=False):
+    "Runs a Python interactive interpreter. Tries to use IPython, if it's available."
+    try:
+        if use_plain:
+            # Don't bother loading IPython, because the user wants plain Python.
+            raise ImportError
+        import IPython
+        shell = IPython.Shell.IPShell()
+        shell.mainloop()
+    except ImportError:
+        import code
+        code.interact()
+run_shell.args = '[--plain]'
 
 # Utilities for command-line script
 
@@ -873,11 +930,13 @@ def print_error(msg, cmd):
 
 def execute_from_command_line(action_mapping=DEFAULT_ACTION_MAPPING):
     # Parse the command-line arguments. optparse handles the dirty work.
-    parser = DjangoOptionParser(get_usage(action_mapping))
+    parser = DjangoOptionParser(usage=get_usage(action_mapping), version=get_version())
     parser.add_option('--settings',
         help='Python path to settings module, e.g. "myproject.settings.main". If this isn\'t provided, the DJANGO_SETTINGS_MODULE environment variable will be used.')
     parser.add_option('--pythonpath',
         help='Lets you manually add a directory the Python path, e.g. "/home/djangoprojects/myproject".')
+    parser.add_option('--plain', action='store_true', dest='plain',
+        help='Tells Django to use plain Python, not IPython, for "shell" command.')
     options, args = parser.parse_args()
 
     # Take care of options.
@@ -913,7 +972,9 @@ def execute_from_command_line(action_mapping=DEFAULT_ACTION_MAPPING):
                 sys.exit(1)
         else:
             action_mapping[action](username, email, password)
-    elif action in ('init', 'shell', 'validate'):
+    elif action == 'shell':
+        action_mapping[action](options.plain is True)
+    elif action in ('init', 'validate'):
         action_mapping[action]()
     elif action == 'inspectdb':
         try:

@@ -44,7 +44,14 @@ def variantToPython(variant, adType):
     return res
 Database.convertVariantToPython = variantToPython
 
-class DatabaseWrapper:
+try:
+    # Only exists in python 2.4+
+    from threading import local
+except ImportError:
+    # Import copy of _thread_local.py from python 2.4
+    from django.utils._threading_local import local
+
+class DatabaseWrapper(local):
     def __init__(self):
         self.connection = None
         self.queries = []
@@ -118,6 +125,9 @@ def get_table_description(cursor, table_name):
 def get_relations(cursor, table_name):
     raise NotImplementedError
 
+def get_indexes(cursor, table_name):
+    raise NotImplementedError
+
 OPERATOR_MAPPING = {
     'exact': '= %s',
     'iexact': 'LIKE %s',
@@ -153,7 +163,7 @@ DATA_TYPES = {
     'PhoneNumberField':  'varchar(20)',
     'PositiveIntegerField': 'int CONSTRAINT [CK_int_pos_%(column)s] CHECK ([%(column)s] > 0)',
     'PositiveSmallIntegerField': 'smallint CONSTRAINT [CK_smallint_pos_%(column)s] CHECK ([%(column)s] > 0)',
-    'SlugField':         'varchar(50)',
+    'SlugField':         'varchar(%(maxlength)s)',
     'SmallIntegerField': 'smallint',
     'TextField':         'text',
     'TimeField':         'time',

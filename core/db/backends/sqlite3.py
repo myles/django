@@ -24,7 +24,14 @@ def utf8rowFactory(cursor, row):
             return s
     return [utf8(r) for r in row]
 
-class DatabaseWrapper:
+try:
+    # Only exists in python 2.4+
+    from threading import local
+except ImportError:
+    # Import copy of _thread_local.py from python 2.4
+    from django.utils._threading_local import local
+
+class DatabaseWrapper(local):
     def __init__(self):
         self.connection = None
         self.queries = []
@@ -134,6 +141,9 @@ def get_table_description(cursor, table_name):
 def get_relations(cursor, table_name):
     raise NotImplementedError
 
+def get_indexes(cursor, table_name):
+    raise NotImplementedError
+
 # Operators and fields ########################################################
 
 # SQLite requires LIKE statements to include an ESCAPE clause if the value
@@ -177,7 +187,7 @@ DATA_TYPES = {
     'PhoneNumberField':             'varchar(20)',
     'PositiveIntegerField':         'integer unsigned',
     'PositiveSmallIntegerField':    'smallint unsigned',
-    'SlugField':                    'varchar(50)',
+    'SlugField':                    'varchar(%(maxlength)s)',
     'SmallIntegerField':            'smallint',
     'TextField':                    'text',
     'TimeField':                    'time',
@@ -214,7 +224,7 @@ class FlexibleFieldLookupDict:
             import re
             m = re.search(r'^\s*(?:var)?char\s*\(\s*(\d+)\s*\)\s*$', key)
             if m:
-                return ('CharField', {'maxlength': m.group(1)})
+                return ('CharField', {'maxlength': int(m.group(1))})
             raise KeyError
 
 DATA_TYPES_REVERSE = FlexibleFieldLookupDict()

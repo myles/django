@@ -10,20 +10,19 @@ form field is required.
 
 import re
 
-_datere = r'\d{4}-((?:0?[1-9])|(?:1[0-2]))-((?:0?[1-9])|(?:[12][0-9])|(?:3[0-1]))'
+_datere = r'(19|2\d)\d{2}-((?:0?[1-9])|(?:1[0-2]))-((?:0?[1-9])|(?:[12][0-9])|(?:3[0-1]))'
 _timere = r'(?:[01]?[0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?'
 alnum_re = re.compile(r'^\w+$')
-alnumurl_re = re.compile(r'^[\w/]+$')
+alnumurl_re = re.compile(r'^[-\w/]+$')
 ansi_date_re = re.compile('^%s$' % _datere)
 ansi_time_re = re.compile('^%s$' % _timere)
 ansi_datetime_re = re.compile('^%s %s$' % (_datere, _timere))
-# From http://www.twilightsoul.com/Default.aspx?tabid=134
-email_re = re.compile(r'^((([\t\x20]*[!#-\'\*\+\-/-9=\?A-Z\^-~]+[\t\x20]*|"[\x01-\x09\x0B\x0C\x0E-\x21\x23-\x5B\x5D-\x7F]*")+)?[\t\x20]*<([\t\x20]*[!#-\'\*\+\-/-9=\?A-Z\^-~]+(\.[!#-\'\*\+\-/-9=\?A-Z\^-~]+)*|"[\x01-\x09\x0B\x0C\x0E-\x21\x23-\x5B\x5D-\x7F]*")@(([a-zA-Z0-9][-a-zA-Z0-9]*[a-zA-Z0-9]\.)+[a-zA-Z]{2,}|\[(([0-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\])>[\t\x20]*|([\t\x20]*[!#-\'\*\+\-/-9=\?A-Z\^-~]+(\.[!#-\'\*\+\-/-9=\?A-Z\^-~]+)*|"[\x01-\x09\x0B\x0C\x0E-\x21\x23-\x5B\x5D-\x7F]*")@(([a-zA-Z0-9][-a-zA-Z0-9]*[a-zA-Z0-9]\.)+[a-zA-Z]{2,}|\[(([0-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]?[0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\]))$')
+email_re = re.compile(r'^[A-Z0-9._%-][+A-Z0-9._%-]*@(?:[A-Z0-9-]+\.)+[A-Z]{2,4}$', re.IGNORECASE)
 integer_re = re.compile(r'^-?\d+$')
 ip4_re = re.compile(r'^(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}$')
 phone_re = re.compile(r'^[A-PR-Y0-9]{3}-[A-PR-Y0-9]{3}-[A-PR-Y0-9]{4}$', re.IGNORECASE)
 slug_re = re.compile(r'^[-\w]+$')
-url_re = re.compile(r'^http://\S+$')
+url_re = re.compile(r'^https?://\S+$')
 
 from django.conf.settings import JING_PATH
 from django.utils.translation import gettext_lazy, ngettext
@@ -63,7 +62,7 @@ def isAlphaNumeric(field_data, all_data):
 
 def isAlphaNumericURL(field_data, all_data):
     if not alnumurl_re.search(field_data):
-        raise ValidationError, _("This value must contain only letters, numbers, underscores and slashes.")
+        raise ValidationError, _("This value must contain only letters, numbers, underscores, dashes or slashes.")
 
 def isSlug(field_data, all_data):
     if not slug_re.search(field_data):
@@ -380,7 +379,7 @@ class MatchesRegularExpression:
         self.error_message = error_message
 
     def __call__(self, field_data, all_data):
-        if not self.regexp.match(field_data):
+        if not self.regexp.search(field_data):
             raise ValidationError(self.error_message)
 
 class AnyValidator:

@@ -55,9 +55,30 @@ class WSGIRequest(httpwrappers.HttpRequest):
 
     def __repr__(self):
         from pprint import pformat
-        return '<DjangoRequest\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s>' % \
-            (pformat(self.GET), pformat(self.POST), pformat(self.COOKIES),
-            pformat(self.META))
+        # Since this is called as part of error handling, we need to be very
+        # robust against potentially malformed input.
+        try:
+            get = pformat(self.GET)
+        except:
+            get = '<could not parse>'
+        try:
+            post = pformat(self.POST)
+        except:
+            post = '<could not parse>'
+        try:
+            cookies = pformat(self.COOKIES)
+        except:
+            cookies = '<could not parse>'
+        try:
+            meta = pformat(self.META)
+        except:
+            meta = '<could not parse>'
+        try:
+            user = self.user
+        except:
+            user = '<could not parse>'
+        return '<DjangoRequest\npath:%s,\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s,\nuser:%s>' % \
+               (self.path, get, post, cookies, meta, user)
 
     def get_full_path(self):
         return '%s%s' % (self.path, self.environ['QUERY_STRING'] and ('?' + self.environ['QUERY_STRING']) or '')
@@ -145,6 +166,10 @@ class WSGIHandler(BaseHandler):
         from django.conf import settings
         from django.core import db
 
+        if settings.ENABLE_PSYCO:
+            import psyco
+            psyco.profile()
+
         # Set up middleware if needed. We couldn't do this earlier, because
         # settings weren't available.
         if self._request_middleware is None:
@@ -168,6 +193,5 @@ class WSGIHandler(BaseHandler):
         response_headers = response.headers.items()
         for c in response.cookies.values():
             response_headers.append(('Set-Cookie', c.output(header='')))
-        output = [response.get_content_as_string(settings.DEFAULT_CHARSET)]
         start_response(status, response_headers)
-        return output
+        return response.iterator

@@ -66,21 +66,34 @@ def parse_file_upload(header_dict, post_data):
 class QueryDict(MultiValueDict):
     """A specialized MultiValueDict that takes a query string when initialized.
     This is immutable unless you create a copy of it."""
-    def __init__(self, query_string):
+    def __init__(self, query_string, mutable=False):
         MultiValueDict.__init__(self)
         self._mutable = True
         for key, value in parse_qsl((query_string or ''), True): # keep_blank_values=True
             self.appendlist(key, value)
-        self._mutable = False
+        self._mutable = mutable
 
     def _assert_mutable(self):
         if not self._mutable:
             raise AttributeError, "This QueryDict instance is immutable"
 
-    def _setitem_if_mutable(self, key, value):
+    def __setitem__(self, key, value):
         self._assert_mutable()
         MultiValueDict.__setitem__(self, key, value)
-    __setitem__ = _setitem_if_mutable
+
+    def __copy__(self):
+        result = self.__class__('', mutable=True)
+        for key, value in dict.items(self):
+            dict.__setitem__(result, key, value)
+        return result
+
+    def __deepcopy__(self, memo={}):
+        import copy
+        result = self.__class__('', mutable=True)
+        memo[id(self)] = result
+        for key, value in dict.items(self):
+            dict.__setitem__(result, copy.deepcopy(key, memo), copy.deepcopy(value, memo))
+        return result
 
     def setlist(self, key, list_):
         self._assert_mutable()
@@ -112,13 +125,7 @@ class QueryDict(MultiValueDict):
 
     def copy(self):
         "Returns a mutable copy of this object."
-        import copy
-        # Our custom __setitem__ must be disabled for copying machinery.
-        QueryDict.__setitem__ = dict.__setitem__
-        cp = copy.deepcopy(self)
-        QueryDict.__setitem__ = QueryDict._setitem_if_mutable
-        cp._mutable = True
-        return cp
+        return self.__deepcopy__()
 
     def urlencode(self):
         output = []
@@ -136,14 +143,20 @@ def parse_cookie(cookie):
         cookiedict[key] = c.get(key).value
     return cookiedict
 
-class HttpResponse:
+class HttpResponse(object):
     "A basic HTTP response, with content and dictionary-accessed headers"
     def __init__(self, content='', mimetype=None):
+        from django.conf import settings
+        self._charset = settings.DEFAULT_CHARSET
         if not mimetype:
-            from django.conf.settings import DEFAULT_CONTENT_TYPE, DEFAULT_CHARSET
-            mimetype = "%s; charset=%s" % (DEFAULT_CONTENT_TYPE, DEFAULT_CHARSET)
-        self.content = content
-        self.headers = {'Content-Type':mimetype}
+            mimetype = "%s; charset=%s" % (settings.DEFAULT_CONTENT_TYPE, settings.DEFAULT_CHARSET)
+        if hasattr(content, '__iter__'):
+            self._iterator = content
+            self._is_string = False
+        else:
+            self._iterator = [content]
+            self._is_string = True
+        self.headers = {'Content-Type': mimetype}
         self.cookies = SimpleCookie()
         self.status_code = 200
 
@@ -186,25 +199,41 @@ class HttpResponse:
         except KeyError:
             pass
 
-    def get_content_as_string(self, encoding):
-        """
-        Returns the content as a string, encoding it from a Unicode object if
-        necessary.
-        """
-        if isinstance(self.content, unicode):
-            return self.content.encode(encoding)
-        return self.content
+    def _get_content(self):
+        content = ''.join(self._iterator)
+        if isinstance(content, unicode):
+            content = content.encode(self._charset)
+        return content
+
+    def _set_content(self, value):
+        self._iterator = [value]
+        self._is_string = True
+
+    content = property(_get_content, _set_content)
+
+    def _get_iterator(self):
+        "Output iterator. Converts data into client charset if necessary."
+        for chunk in self._iterator:
+            if isinstance(chunk, unicode):
+                chunk = chunk.encode(self._charset)
+            yield chunk
+
+    iterator = property(_get_iterator)
 
     # The remaining methods partially implement the file-like object interface.
     # See http://docs.python.org/lib/bltin-file-objects.html
     def write(self, content):
-        self.content += content
+        if not self._is_string:
+            raise Exception, "This %s instance is not writable" % self.__class__
+        self._iterator.append(content)
 
     def flush(self):
         pass
 
     def tell(self):
-        return len(self.content)
+        if not self._is_string:
+            raise Exception, "This %s instance cannot tell its position" % self.__class__
+        return sum([len(chunk) for chunk in self._iterator])
 
 class HttpResponseRedirect(HttpResponse):
     def __init__(self, redirect_to):

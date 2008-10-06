@@ -13,7 +13,7 @@ try:
     from django.models.admin import log
 except ImportError:
     raise ImproperlyConfigured, "You don't have 'django.contrib.admin' in INSTALLED_APPS."
-from django.utils.html import strip_tags
+from django.utils.html import escape
 from django.utils.httpwrappers import HttpResponse, HttpResponseRedirect
 from django.utils.text import capfirst, get_text_list
 from django.utils import dateformat
@@ -97,8 +97,16 @@ class ChangeList(object):
         self.mod, self.opts = _get_mod_opts(app_label, module_name)
         if not request.user.has_perm(app_label + '.' + self.opts.get_change_permission()):
             raise PermissionDenied
-
-        self.lookup_mod, self.lookup_opts = self.mod, self.opts
+        
+        lookup_mod, lookup_opts = self.mod, self.opts
+        if self.opts.one_to_one_field:
+            lookup_mod = self.opts.one_to_one_field.rel.to.get_model_module()
+            lookup_opts = lookup_mod.Klass._meta
+            # If lookup_opts doesn't have admin set, give it the default meta.Admin().
+            if not lookup_opts.admin:
+                lookup_opts.admin = meta.Admin()
+                
+        self.lookup_mod, self.lookup_opts = lookup_mod, lookup_opts
 
     def get_search_parameters(self, request):
         # Get search parameters from the query string.
@@ -174,7 +182,7 @@ class ChangeList(object):
                 except meta.FieldDoesNotExist:
                     pass
                 else:
-                    if not isinstance(f.rel, meta.ManyToOne) or not f.null:
+                    if not isinstance(f.rel, meta.ManyToOneRel) or not f.null:
                         order_field = f.name
             except (IndexError, ValueError):
                 pass # Invalid ordering specified. Just use the default.
@@ -199,7 +207,7 @@ class ChangeList(object):
         except meta.FieldDoesNotExist:
             pass
         else:
-            if isinstance(lookup_opts.get_field(order_field).rel, meta.ManyToOne):
+            if isinstance(lookup_opts.get_field(order_field).rel, meta.ManyToOneRel):
                 f = lookup_opts.get_field(order_field)
                 rel_ordering = f.rel.to.ordering and f.rel.to.ordering[0] or f.rel.to.pk.column
                 lookup_order_field = '%s.%s' % (f.rel.to.db_table, rel_ordering)
@@ -214,7 +222,7 @@ class ChangeList(object):
                 except meta.FieldDoesNotExist:
                     pass
                 else:
-                    if isinstance(f.rel, meta.ManyToOne):
+                    if isinstance(f.rel, meta.ManyToOneRel):
                         lookup_params['select_related'] = True
                         break
         lookup_params['order_by'] = ((order_type == 'desc' and '-' or '') + lookup_order_field,)
@@ -247,7 +255,7 @@ def change_list(request, app_label, module_name):
                                'admin/change_list'], context_instance=c)
 change_list = staff_member_required(change_list)
 
-use_raw_id_admin = lambda field: isinstance(field.rel, (meta.ManyToOne, meta.ManyToMany)) and field.rel.raw_id_admin
+use_raw_id_admin = lambda field: isinstance(field.rel, (meta.ManyToOneRel, meta.ManyToManyRel)) and field.rel.raw_id_admin
 
 def get_javascript_imports(opts,auto_populated_fields, ordered_objects, field_sets):
 # Put in any necessary JavaScript imports.
@@ -285,7 +293,7 @@ class AdminBoundField(BoundField):
         self.raw_id_admin = use_raw_id_admin(field)
         self.is_date_time = isinstance(field, meta.DateTimeField)
         self.is_file_field = isinstance(field, meta.FileField)
-        self.needs_add_label = field.rel and isinstance(field.rel, meta.ManyToOne) or isinstance(field.rel, meta.ManyToMany) and field.rel.to.admin
+        self.needs_add_label = field.rel and isinstance(field.rel, meta.ManyToOneRel) or isinstance(field.rel, meta.ManyToManyRel) and field.rel.to.admin
         self.hidden = isinstance(self.field, meta.AutoField)
         self.first = False
 
@@ -307,10 +315,10 @@ class AdminBoundField(BoundField):
         if getattr(self, '_display_filled', False):
             return
         # HACK
-        if isinstance(self.field.rel, meta.ManyToOne):
+        if isinstance(self.field.rel, meta.ManyToOneRel):
              func_name = 'get_%s' % self.field.name
              self._display = self._fetch_existing_display(func_name)
-        elif isinstance(self.field.rel, meta.ManyToMany):
+        elif isinstance(self.field.rel, meta.ManyToManyRel):
             func_name = 'get_%s_list' % self.field.rel.singular
             self._display =  ", ".join([str(obj) for obj in self._fetch_existing_display(func_name)])
         self._display_filled = True
@@ -418,7 +426,7 @@ def add_stage(request, app_label, module_name, show_delete=False, form_url='', p
                 return HttpResponseRedirect(post_url_continue % pk_value)
             if request.POST.has_key("_popup"):
                 return HttpResponse('<script type="text/javascript">opener.dismissAddAnotherPopup(window, %s, "%s");</script>' % \
-                    (pk_value, repr(new_object).replace('"', '\\"')))
+                    (pk_value, str(new_object).replace('"', '\\"')))
             elif request.POST.has_key("_addanother"):
                 request.user.add_message(msg + ' ' + (_("You may add another %s below.") % opts.verbose_name))
                 return HttpResponseRedirect(request.path)
@@ -541,6 +549,7 @@ def change_stage(request, app_label, module_name, object_id):
     })
 
     return render_change_form(opts,manipulator, app_label, c, change=True)
+change_stage = staff_member_required(change_stage)
 
 def _nest_help(obj, depth, val):
     current = obj
@@ -559,7 +568,7 @@ def _get_deleted_objects(deleted_objects, perms_needed, user, obj, opts, current
             continue
         opts_seen.append(related.opts)
         rel_opts_name = related.get_method_name_part()
-        if isinstance(related.field.rel, meta.OneToOne):
+        if isinstance(related.field.rel, meta.OneToOneRel):
             try:
                 sub_obj = getattr(obj, 'get_%s' % rel_opts_name)()
             except ObjectDoesNotExist:
@@ -588,18 +597,18 @@ def _get_deleted_objects(deleted_objects, perms_needed, user, obj, opts, current
                 if related.field.rel.edit_inline or not related.opts.admin:
                     # Don't display link to edit, because it either has no
                     # admin or is edited inline.
-                    nh(deleted_objects, current_depth, ['%s: %s' % (capfirst(related.opts.verbose_name), strip_tags(str(sub_obj))), []])
+                    nh(deleted_objects, current_depth, ['%s: %s' % (capfirst(related.opts.verbose_name), escape(str(sub_obj))), []])
                 else:
                     # Display a link to the admin page.
                     nh(deleted_objects, current_depth, ['%s: <a href="../../../../%s/%s/%s/">%s</a>' % \
-                        (capfirst(related.opts.verbose_name), related.opts.app_label, related.opts.module_name, sub_obj.id, strip_tags(str(sub_obj))), []])
+                        (capfirst(related.opts.verbose_name), related.opts.app_label, related.opts.module_name, getattr(sub_obj, related.opts.pk.attname), escape(str(sub_obj))), []])
                 _get_deleted_objects(deleted_objects, perms_needed, user, sub_obj, related.opts, current_depth+2)
             # If there were related objects, and the user doesn't have
             # permission to delete them, add the missing perm to perms_needed.
             if related.opts.admin and has_related_objs:
                 p = '%s.%s' % (related.opts.app_label, related.opts.get_delete_permission())
                 if not user.has_perm(p):
-                    perms_needed.add(rel_opts.verbose_name)
+                    perms_needed.add(rel_opts_name)
     for related in opts.get_all_related_many_to_many_objects():
         if related.opts in opts_seen:
             continue
@@ -612,13 +621,13 @@ def _get_deleted_objects(deleted_objects, perms_needed, user, obj, opts, current
                 # Don't display link to edit, because it either has no
                 # admin or is edited inline.
                 nh(deleted_objects, current_depth, [_('One or more %(fieldname)s in %(name)s: %(obj)s') % \
-                    {'fieldname': related.field.name, 'name': related.opts.verbose_name, 'obj': strip_tags(str(sub_obj))}, []])
+                    {'fieldname': related.field.name, 'name': related.opts.verbose_name, 'obj': escape(str(sub_obj))}, []])
             else:
                 # Display a link to the admin page.
                 nh(deleted_objects, current_depth, [
                     (_('One or more %(fieldname)s in %(name)s:') % {'fieldname': related.field.name, 'name':related.opts.verbose_name}) + \
                     (' <a href="../../../../%s/%s/%s/">%s</a>' % \
-                        (related.opts.app_label, related.opts.module_name, sub_obj.id, strip_tags(str(sub_obj)))), []])
+                        (related.opts.app_label, related.opts.module_name, getattr(sub_obj, related.opts.pk.attname), escape(str(sub_obj)))), []])
         # If there were related objects, and the user doesn't have
         # permission to change them, add the missing perm to perms_needed.
         if related.opts.admin and has_related_objs:
@@ -635,7 +644,7 @@ def delete_stage(request, app_label, module_name, object_id):
 
     # Populate deleted_objects, a data structure of all related objects that
     # will also be deleted.
-    deleted_objects = ['%s: <a href="../../%s/">%s</a>' % (capfirst(opts.verbose_name), object_id, strip_tags(str(obj))), []]
+    deleted_objects = ['%s: <a href="../../%s/">%s</a>' % (capfirst(opts.verbose_name), object_id, escape(str(obj))), []]
     perms_needed = sets.Set()
     _get_deleted_objects(deleted_objects, perms_needed, request.user, obj, opts, 1)
 

@@ -133,7 +133,7 @@ def wordwrap(value, arg):
     """
     Wraps words at specified line length
 
-    Argument: number of words to wrap the text at.
+    Argument: number of characters at which to wrap the text
     """
     from django.utils.text import wrap
     return wrap(str(value), int(arg))
@@ -327,18 +327,26 @@ def get_digit(value, arg):
 # DATES           #
 ###################
 
+EMPTY_DATE_VALUES = (None, '')
+
 def date(value, arg=DATE_FORMAT):
     "Formats a date according to the given format"
+    if value in EMPTY_DATE_VALUES:
+        return ''
     from django.utils.dateformat import format
     return format(value, arg)
 
 def time(value, arg=TIME_FORMAT):
     "Formats a time according to the given format"
+    if value in EMPTY_DATE_VALUES:
+        return ''
     from django.utils.dateformat import time_format
     return time_format(value, arg)
 
 def timesince(value):
     'Formats a date as the time since that date (i.e. "4 days, 6 hours")'
+    if value in EMPTY_DATE_VALUES:
+        return ''
     from django.utils.timesince import timesince
     return timesince(value)
 

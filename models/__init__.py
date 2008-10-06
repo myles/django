@@ -26,13 +26,13 @@ for mod in modules:
             # generated.
             rel_mod = related.opts.get_model_module()
             rel_obj_name = related.get_method_name_part()
-            if isinstance(related.field.rel, meta.OneToOne):
+            if isinstance(related.field.rel, meta.OneToOneRel):
                 # Add "get_thingie" methods for one-to-one related objects.
                 # EXAMPLE: Place.get_restaurants_restaurant()
                 func = curry(meta.method_get_related, 'get_object', rel_mod, related.field)
                 func.__doc__ = "Returns the associated `%s.%s` object." % (related.opts.app_label, related.opts.module_name)
                 setattr(klass, 'get_%s' % rel_obj_name, func)
-            elif isinstance(related.field.rel, meta.ManyToOne):
+            elif isinstance(related.field.rel, meta.ManyToOneRel):
                 # Add "get_thingie" methods for many-to-one related objects.
                 # EXAMPLE: Poll.get_choice()
                 func = curry(meta.method_get_related, 'get_object', rel_mod, related.field)

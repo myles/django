@@ -57,7 +57,7 @@ times with multiple contexts)
 import re
 from inspect import getargspec
 from django.utils.functional import curry
-from django.conf.settings import DEFAULT_CHARSET, TEMPLATE_DEBUG
+from django.conf.settings import DEFAULT_CHARSET, TEMPLATE_DEBUG, TEMPLATE_STRING_IF_INVALID
 
 __all__ = ('Template','Context','compile_string')
 
@@ -181,7 +181,7 @@ class Context:
         for dict in self.dicts:
             if dict.has_key(key):
                 return dict[key]
-        return ''
+        return TEMPLATE_STRING_IF_INVALID
 
     def __delitem__(self, key):
         "Delete a variable from the current context"
@@ -310,6 +310,13 @@ class Parser(object):
         if parse_until:
             self.unclosed_block_tag(parse_until)
         return nodelist
+
+    def skip_past(self, endtag):
+        while self.tokens:
+            token = self.next_token()
+            if token.token_type == TOKEN_BLOCK and token.contents == endtag:
+                return
+        self.unclosed_block_tag([endtag])
 
     def create_variable_node(self, filter_expression):
         return VariableNode(filter_expression)
@@ -581,7 +588,7 @@ class FilterExpression(object):
         try:
             obj = resolve_variable(self.var, context)
         except VariableDoesNotExist:
-            obj = ''
+            obj = TEMPLATE_STRING_IF_INVALID
         for func, args in self.filters:
             arg_vals = []
             for lookup, arg in args:
@@ -650,7 +657,7 @@ def resolve_variable(path, context):
         try:
            current = number_type(path)
         except ValueError:
-           current = ''
+           current = TEMPLATE_STRING_IF_INVALID
     elif path[0] in ('"', "'") and path[0] == path[-1]:
         current = path[1:-1]
     else:
@@ -664,16 +671,16 @@ def resolve_variable(path, context):
                     current = getattr(current, bits[0])
                     if callable(current):
                         if getattr(current, 'alters_data', False):
-                            current = ''
+                            current = TEMPLATE_STRING_IF_INVALID
                         else:
                             try: # method call (assuming no args required)
                                 current = current()
                             except SilentVariableFailure:
-                                current = ''
+                                current = TEMPLATE_STRING_IF_INVALID
                             except TypeError: # arguments *were* required
                                 # GOTCHA: This will also catch any TypeError
                                 # raised in the function itself.
-                                current = '' # invalid method call
+                                current = TEMPLATE_STRING_IF_INVALID # invalid method call
                 except (TypeError, AttributeError):
                     try: # list-index lookup
                         current = current[int(bits[0])]

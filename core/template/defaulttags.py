@@ -121,12 +121,7 @@ class IfChangedNode(Node):
     def render(self, context):
         content = self.nodelist.render(context)
         if content != self._last_seen:
-            firstloop = (self._last_seen == None)
             self._last_seen = content
-            context.push()
-            context['ifchanged'] = {'firstloop': firstloop}
-            content = self.nodelist.render(context)
-            context.pop()
             return content
         else:
             return ''
@@ -249,6 +244,14 @@ class NowNode(Node):
         df = DateFormat(datetime.now())
         return df.format(self.format_string)
 
+class SpacelessNode(Node):
+    def __init__(self, nodelist):
+        self.nodelist = nodelist
+
+    def render(self, context):
+        from django.utils.html import strip_spaces_between_tags
+        return strip_spaces_between_tags(self.nodelist.render(context).strip())
+
 class TemplateTagNode(Node):
     mapping = {'openblock': BLOCK_TAG_START,
                'closeblock': BLOCK_TAG_END,
@@ -286,8 +289,7 @@ def comment(parser, token):
     """
     Ignore everything between ``{% comment %}`` and ``{% endcomment %}``
     """
-    nodelist = parser.parse(('endcomment',))
-    parser.delete_first_token()
+    parser.skip_past('endcomment')
     return CommentNode()
 comment = register.tag(comment)
 
@@ -726,6 +728,37 @@ def regroup(parser, token):
     var_name = lastbits_reversed[0][::-1]
     return RegroupNode(target, expression, var_name)
 regroup = register.tag(regroup)
+
+def spaceless(parser, token):
+    """
+    Normalize whitespace between HTML tags to a single space. This includes tab
+    characters and newlines.
+
+    Example usage::
+
+        {% spaceless %}
+            <p>
+                <a href="foo/">Foo</a>
+            </p>
+        {% endspaceless %}
+
+    This example would return this HTML::
+
+        <p> <a href="foo/">Foo</a> </p>
+
+    Only space between *tags* is normalized -- not space between tags and text. In
+    this example, the space around ``Hello`` won't be stripped::
+
+        {% spaceless %}
+            <strong>
+                Hello
+            </strong>
+        {% endspaceless %}
+    """
+    nodelist = parser.parse(('endspaceless',))
+    parser.delete_first_token()
+    return SpacelessNode(nodelist)
+spaceless = register.tag(spaceless)
 
 #@register.tag
 def templatetag(parser, token):

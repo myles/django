@@ -3,12 +3,21 @@
 
 function showRelatedObjectLookupPopup(triggeringLink) {
     var name = triggeringLink.id.replace(/^lookup_/, '');
-    var win = window.open(triggeringLink.href + '?pop=1', name, 'height=500,width=740,resizable=yes,scrollbars=yes');
+    // IE doesn't like periods in the window name, so convert temporarily.
+    name = name.replace(/\./g, '___');
+    var href;
+    if (triggeringLink.href.search(/\?/) >= 0) {
+        href = triggeringLink.href + '&pop=1';
+    } else {
+        href = triggeringLink.href + '?pop=1';
+    }
+    var win = window.open(href, name, 'height=500,width=740,resizable=yes,scrollbars=yes');
     win.focus();
     return false;
 }
 
 function dismissRelatedLookupPopup(win, chosenId) {
+    var name = win.name.replace(/___/g, '.');
     var elem = document.getElementById(win.name);
     if (elem.className.indexOf('vRawIdAdminField') != -1 && elem.value) {
         elem.value += ',' + chosenId;
@@ -27,14 +36,22 @@ function showAddAnotherPopup(triggeringLink) {
 }
 
 function dismissAddAnotherPopup(win, newId, newRepr) {
-    var name = win.name.replace(/___/g, '.')
+    var name = win.name.replace(/___/g, '.');
     var elem = document.getElementById(name);
-    if (elem.nodeName == 'SELECT') {
+    if (elem) {
+        if (elem.nodeName == 'SELECT') {
+            var o = new Option(newRepr, newId);
+            elem.options[elem.options.length] = o;
+            elem.selectedIndex = elem.length - 1;
+        } else if (elem.nodeName == 'INPUT') {
+            elem.value = newId;
+        }
+    } else {
+        var toId = name + "_to";
+        elem = document.getElementById(toId);
         var o = new Option(newRepr, newId);
-        elem.options[elem.options.length] = o
-        elem.selectedIndex = elem.length - 1;
-    } else if (elem.nodeName == 'INPUT') {
-        elem.value = newId;
+        SelectBox.add_to_cache(toId, o);
+        SelectBox.redisplay(toId);
     }
     win.close();
 }

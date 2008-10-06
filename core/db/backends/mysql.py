@@ -47,14 +47,31 @@ class MysqlDebugWrapper:
         else:
             return getattr(self.cursor, attr)
 
-class DatabaseWrapper:
+try:
+    # Only exists in python 2.4+
+    from threading import local
+except ImportError:
+    # Import copy of _thread_local.py from python 2.4
+    from django.utils._threading_local import local
+
+class DatabaseWrapper(local):
     def __init__(self):
         self.connection = None
         self.queries = []
 
+    def _valid_connection(self):
+        if self.connection is not None:
+            try:
+                self.connection.ping()
+                return True
+            except DatabaseError:
+                self.connection.close()
+                self.connection = None
+        return False
+
     def cursor(self):
         from django.conf.settings import DATABASE_USER, DATABASE_NAME, DATABASE_HOST, DATABASE_PORT, DATABASE_PASSWORD, DEBUG
-        if self.connection is None:
+        if not self._valid_connection():
             kwargs = {
                 'user': DATABASE_USER,
                 'db': DATABASE_NAME,
@@ -93,8 +110,7 @@ class DatabaseWrapper:
         return "`%s`" % name
 
 def get_last_insert_id(cursor, table_name, pk_name):
-    cursor.execute("SELECT LAST_INSERT_ID()")
-    return cursor.fetchone()[0]
+    return cursor.lastrowid
 
 def get_date_extract_sql(lookup_type, table_name):
     # lookup_type is 'year', 'month', 'day'
@@ -106,6 +122,9 @@ def get_date_trunc_sql(lookup_type, field_name):
     # http://dev.mysql.com/doc/mysql/en/date-and-time-functions.html
     # MySQL doesn't support DATE_TRUNC, so we fake it by subtracting intervals.
     # If you know of a better way to do this, please file a Django ticket.
+    # Note that we can't use DATE_FORMAT directly because that causes the output
+    # to be a string rather than a datetime object, and we need MySQL to return
+    # a date so that it's typecasted properly into a Python datetime object.
     subtractions = ["interval (DATE_FORMAT(%s, '%%%%s')) second - interval (DATE_FORMAT(%s, '%%%%i')) minute - interval (DATE_FORMAT(%s, '%%%%H')) hour" % (field_name, field_name, field_name)]
     if lookup_type in ('year', 'month'):
         subtractions.append(" - interval (DATE_FORMAT(%s, '%%%%e')-1) day" % field_name)
@@ -135,6 +154,19 @@ def get_table_description(cursor, table_name):
 def get_relations(cursor, table_name):
     raise NotImplementedError
 
+def get_indexes(cursor, table_name):
+    """
+    Returns a dictionary of fieldname -> infodict for the given table,
+    where each infodict is in the format:
+        {'primary_key': boolean representing whether it's the primary key,
+         'unique': boolean representing whether it's a unique index}
+    """
+    cursor.execute("SHOW INDEX FROM %s" % DatabaseWrapper().quote_name(table_name))
+    indexes = {}
+    for row in cursor.fetchall():
+        indexes[row[4]] = {'primary_key': (row[2] == 'PRIMARY'), 'unique': not bool(row[1])}
+    return indexes
+
 OPERATOR_MAPPING = {
     'exact': '= %s',
     'iexact': 'LIKE %s',
@@ -156,7 +188,7 @@ OPERATOR_MAPPING = {
 # be interpolated against the values of Field.__dict__ before being output.
 # If a column type is set to None, it won't be included in the output.
 DATA_TYPES = {
-    'AutoField':         'mediumint(9) unsigned auto_increment',
+    'AutoField':         'integer AUTO_INCREMENT',
     'BooleanField':      'bool',
     'CharField':         'varchar(%(maxlength)s)',
     'CommaSeparatedIntegerField': 'varchar(%(maxlength)s)',
@@ -174,7 +206,7 @@ DATA_TYPES = {
     'PhoneNumberField':  'varchar(20)',
     'PositiveIntegerField': 'integer UNSIGNED',
     'PositiveSmallIntegerField': 'smallint UNSIGNED',
-    'SlugField':         'varchar(50)',
+    'SlugField':         'varchar(%(maxlength)s)',
     'SmallIntegerField': 'smallint',
     'TextField':         'longtext',
     'TimeField':         'time',

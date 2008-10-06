@@ -39,20 +39,25 @@ LANGUAGES = (
     ('cy', _('Welsh')),
     ('da', _('Danish')),
     ('de', _('German')),
+    ('el', _('Greek')),
     ('en', _('English')),
     ('es', _('Spanish')),
     ('fr', _('French')),
     ('gl', _('Galician')),
+    ('he', _('Hebrew')),
     ('is', _('Icelandic')),
     ('it', _('Italian')),
     ('ja', _('Japanese')),
+    ('nl', _('Dutch')),
     ('no', _('Norwegian')),
     ('pt-br', _('Brazilian')),
     ('ro', _('Romanian')),
     ('ru', _('Russian')),
     ('sk', _('Slovak')),
+    ('sl', _('Slovenian')),
     ('sr', _('Serbian')),
     ('sv', _('Swedish')),
+    ('uk', _('Ukrainian')),
     ('zh-cn', _('Simplified Chinese')),
     ('zh-tw', _('Traditional Chinese')),
 )
@@ -84,6 +89,13 @@ DATABASE_PORT = ''             # Set to empty string for default. Not used with 
 # Host for sending e-mail.
 EMAIL_HOST = 'localhost'
 
+# Port for sending e-mail.
+EMAIL_PORT = 25
+
+# Optional SMTP authentication information for EMAIL_HOST.
+EMAIL_HOST_USER = ''
+EMAIL_HOST_PASSWORD = ''
+
 # List of strings representing installed apps.
 INSTALLED_APPS = ()
 
@@ -109,7 +121,11 @@ TEMPLATE_CONTEXT_PROCESSORS = (
     'django.core.context_processors.auth',
     'django.core.context_processors.debug',
     'django.core.context_processors.i18n',
+#    'django.core.context_processors.request',
 )
+
+# Output to use in template system for invalid (e.g. misspelled) variables.
+TEMPLATE_STRING_IF_INVALID = ''
 
 # URL prefix for admin media -- CSS, JavaScript and images. Make sure to use a
 # trailing slash.
@@ -184,6 +200,10 @@ DATETIME_FORMAT = 'N j, Y, P'
 # Default formatting for time objects. See all available format strings here:
 # http://www.djangoproject.com/documentation/templates/#now
 TIME_FORMAT = 'P'
+
+# Whether to enable Psyco, which optimizes Python code. Requires Psyco.
+# http://psyco.sourceforge.net/
+ENABLE_PSYCO = False
 
 ##############
 # MIDDLEWARE #

@@ -151,7 +151,7 @@ class BadKeywordArguments(Exception):
 class BoundRelatedObject(object):
     def __init__(self, related_object, field_mapping, original):
         self.relation = related_object
-        self.field_mappings = field_mapping[related_object.opts.module_name]
+        self.field_mappings = field_mapping[related_object.name]
 
     def template_name(self):
         raise NotImplementedError
@@ -165,7 +165,7 @@ class RelatedObject(object):
         self.opts = opts
         self.field = field
         self.edit_inline = field.rel.edit_inline
-        self.name = opts.module_name
+        self.name = '%s_%s' % (opts.app_label, opts.module_name)
         self.var_name = opts.object_name.lower()
 
     def flatten_data(self, follow, obj=None):
@@ -205,14 +205,13 @@ class RelatedObject(object):
 
             change = count - len(list)
             if change > 0:
-                return list + [None for _ in range(change)]
+                return list + [None] * change
             if change < 0:
                 return list[:change]
             else: # Just right
                 return list
         else:
-            return [None for _ in range(self.field.rel.num_in_admin)]
-
+            return [None] * self.field.rel.num_in_admin
 
     def editable_fields(self):
         "Get the fields in this class that should be edited inline."
@@ -386,7 +385,7 @@ class Options:
         # Move many-to-many related fields from self.fields into self.many_to_many.
         self.fields, self.many_to_many = [], []
         for field in (fields or []):
-            if field.rel and isinstance(field.rel, ManyToMany):
+            if field.rel and isinstance(field.rel, ManyToManyRel):
                 self.many_to_many.append(field)
             else:
                 self.fields.append(field)
@@ -411,7 +410,7 @@ class Options:
         # Calculate one_to_one_field.
         self.one_to_one_field = None
         for f in self.fields:
-            if isinstance(f.rel, OneToOne):
+            if isinstance(f.rel, OneToOneRel):
                 self.one_to_one_field = f
                 break
         # Cache the primary-key field.
@@ -495,7 +494,7 @@ class Options:
                 # subsequently loaded object with related links will override this
                 # relationship we're adding.
                 link_field = copy.copy(relatedlinks.RelatedLink._meta.get_field('object_id'))
-                link_field.rel = ManyToOne(self.get_model_module().Klass, 'id',
+                link_field.rel = ManyToOneRel(self.get_model_module().Klass, 'id',
                     num_in_admin=3, min_num_in_admin=3, edit_inline=TABULAR,
                     lookup_overrides={
                         'content_type__package__label__exact': self.app_label,
@@ -749,7 +748,7 @@ class ModelBase(type):
                 f.rel.field_name = f.rel.field_name or f.rel.to.pk.name
             # Add "get_thingie" methods for many-to-one related objects.
             # EXAMPLES: Choice.get_poll(), Story.get_dateline()
-            if isinstance(f.rel, ManyToOne):
+            if isinstance(f.rel, ManyToOneRel):
                 func = curry(method_get_many_to_one, f)
                 func.__doc__ = "Returns the associated `%s.%s` object." % (f.rel.to.app_label, f.rel.to.module_name)
                 attrs['get_%s' % f.name] = func
@@ -947,7 +946,7 @@ class Model:
 def method_init(opts, self, *args, **kwargs):
     if kwargs:
         for f in opts.fields:
-            if isinstance(f.rel, ManyToOne):
+            if isinstance(f.rel, ManyToOneRel):
                 try:
                     # Assume object instance was passed in.
                     rel_obj = kwargs.pop(f.name)
@@ -1039,7 +1038,7 @@ def method_delete(opts, self):
     cursor = db.db.cursor()
     for related in opts.get_all_related_objects():
         rel_opts_name = related.get_method_name_part()
-        if isinstance(related.field.rel, OneToOne):
+        if isinstance(related.field.rel, OneToOneRel):
             try:
                 sub_obj = getattr(self, 'get_%s' % rel_opts_name)()
             except ObjectDoesNotExist:
@@ -1135,7 +1134,7 @@ def method_get_many_to_many(field_with_rel, self):
 # Handles setting many-to-many relationships.
 # Example: Poll.set_sites()
 def method_set_many_to_many(rel_field, self, id_list):
-    current_ids = [obj.id for obj in method_get_many_to_many(rel_field, self)]
+    current_ids = [getattr(obj, obj._meta.pk.attname) for obj in method_get_many_to_many(rel_field, self)]
     ids_to_add, ids_to_delete = dict([(i, 1) for i in id_list]), []
     for current_id in current_ids:
         if current_id in id_list:
@@ -1177,7 +1176,18 @@ def method_get_related(method_name, rel_mod, rel_field, self, **kwargs):
     else:
         kwargs['%s__%s__exact' % (rel_field.name, rel_field.rel.to.pk.name)] = getattr(self, rel_field.rel.get_related_field().attname)
     kwargs.update(rel_field.rel.lookup_overrides)
-    return getattr(rel_mod, method_name)(**kwargs)
+    related = getattr(rel_mod, method_name)(**kwargs)
+
+    # Cache the 'self' object for backward links.
+    # Example: Each choice in Poll.get_choice_list() will have its poll cache filled.
+    # Pre-cache the self object, for following links back.
+    if method_name == 'get_list':
+        cache_name = rel_field.get_cache_name()
+        for obj in related:
+            setattr(obj, cache_name, self)
+    elif method_name == 'get_object':
+        setattr(related, rel_field.get_cache_name(), self)
+    return related
 
 # Handles adding related objects.
 # Example: Poll.add_choice()
@@ -1343,15 +1353,16 @@ def _get_where_clause(lookup_type, table_prefix, field_name, value):
         pass
     if lookup_type == 'in':
         return '%s%s IN (%s)' % (table_prefix, field_name, ','.join(['%s' for v in value]))
-    elif lookup_type in ('range', 'year'):
+    elif lookup_type == 'range':
         return '%s%s BETWEEN %%s AND %%s' % (table_prefix, field_name)
-    elif lookup_type in ('month', 'day'):
+    elif lookup_type in ('year', 'month', 'day'):
         return "%s = %%s" % db.get_date_extract_sql(lookup_type, table_prefix + field_name)
     elif lookup_type == 'isnull':
         return "%s%s IS %sNULL" % (table_prefix, field_name, (not value and 'NOT ' or ''))
     raise TypeError, "Got invalid lookup_type: %s" % repr(lookup_type)
 
 def function_get_object(opts, klass, does_not_exist_exception, **kwargs):
+    kwargs['order_by'] = kwargs.get('order_by', ())
     obj_list = function_get_list(opts, klass, **kwargs)
     if len(obj_list) < 1:
         raise does_not_exist_exception, "%s does not exist for %s" % (opts.object_name, kwargs)
@@ -1665,10 +1676,7 @@ def function_get_date_list(opts, field, *args, **kwargs):
     from django.core.db.typecasts import typecast_timestamp
     kind = args and args[0] or kwargs['kind']
     assert kind in ("month", "year", "day"), "'kind' must be one of 'year', 'month' or 'day'."
-    order = 'ASC'
-    if kwargs.has_key('_order'):
-        order = kwargs['_order']
-        del kwargs['_order']
+    order = kwargs.pop('_order', 'ASC')
     assert order in ('ASC', 'DESC'), "'order' must be either 'ASC' or 'DESC'"
     kwargs['order_by'] = [] # Clear this because it'll mess things up otherwise.
     if field.null:
@@ -1725,8 +1733,8 @@ def manipulator_init(opts, add, change, self, obj_key=None, follow=None):
             if opts.one_to_one_field:
                 # Sanity check -- Make sure the "parent" object exists.
                 # For example, make sure the Place exists for the Restaurant.
-                # Let the ObjectDoesNotExist exception propogate up.
-                lookup_kwargs = opts.one_to_one_field.rel.limit_choices_to
+                # Let the ObjectDoesNotExist exception propagate up.
+                lookup_kwargs = opts.one_to_one_field.rel.limit_choices_to.copy()
                 lookup_kwargs['%s__exact' % opts.one_to_one_field.rel.field_name] = obj_key
                 _ = opts.one_to_one_field.rel.to.get_model_module().get_object(**lookup_kwargs)
                 params = dict([(f.attname, f.get_default()) for f in opts.fields])
@@ -1919,7 +1927,7 @@ def manipulator_flatten_data(opts, klass, add, change, self):
 def manipulator_validator_unique_together(field_name_list, opts, self, field_data, all_data):
     from django.utils.text import get_text_list
     field_list = [opts.get_field(field_name) for field_name in field_name_list]
-    if isinstance(field_list[0].rel, ManyToOne):
+    if isinstance(field_list[0].rel, ManyToOneRel):
         kwargs = {'%s__%s__iexact' % (field_name_list[0], field_list[0].rel.field_name): field_data}
     else:
         kwargs = {'%s__iexact' % field_name_list[0]: field_data}
@@ -1932,7 +1940,7 @@ def manipulator_validator_unique_together(field_name_list, opts, self, field_dat
             # This will be caught by another validator, assuming the field
             # doesn't have blank=True.
             return
-        if isinstance(f.rel, ManyToOne):
+        if isinstance(f.rel, ManyToOneRel):
             kwargs['%s__pk' % f.name] = field_val
         else:
             kwargs['%s__iexact' % f.name] = field_val
@@ -1954,7 +1962,7 @@ def manipulator_validator_unique_for_date(from_field, date_field, opts, lookup_t
     if date_val is None:
         return # Date was invalid. This will be caught by another validator.
     lookup_kwargs = {'%s__year' % date_field.name: date_val.year}
-    if isinstance(from_field.rel, ManyToOne):
+    if isinstance(from_field.rel, ManyToOneRel):
         lookup_kwargs['%s__pk' % from_field.name] = field_data
     else:
         lookup_kwargs['%s__iexact' % from_field.name] = field_data
