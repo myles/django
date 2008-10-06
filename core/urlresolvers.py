@@ -4,11 +4,14 @@ This module converts requested URLs to callback view functions.
 RegexURLResolver is the main class here. Its resolve() method takes a URL (as
 a string) and returns a tuple in this format:
 
-    (view_function, dict_of_view_function_args)
+    (view_function, function_args, function_kwargs)
 """
 
-from django.core.exceptions import Http404, ViewDoesNotExist
+from django.core.exceptions import Http404, ImproperlyConfigured, ViewDoesNotExist
 import re
+
+class Resolver404(Http404):
+    pass
 
 def get_mod_func(callback):
     # Converts 'django.views.news.stories.story_detail' to
@@ -18,79 +21,91 @@ def get_mod_func(callback):
 
 class RegexURLPattern:
     def __init__(self, regex, callback, default_args=None):
-        self.regex = re.compile(regex)
+        # regex is a string representing a regular expression.
         # callback is something like 'foo.views.news.stories.story_detail',
         # which represents the path to a module and a view function name.
+        self.regex = re.compile(regex)
         self.callback = callback
         self.default_args = default_args or {}
 
-    def search(self, path):
+    def resolve(self, path):
         match = self.regex.search(path)
         if match:
-            args = dict(match.groupdict(), **self.default_args)
+            # If there are any named groups, use those as kwargs, ignoring
+            # non-named groups. Otherwise, pass all non-named arguments as
+            # positional arguments.
+            kwargs = match.groupdict()
+            if kwargs:
+                args = ()
+            if not kwargs:
+                args = match.groups()
+            # In both cases, pass any extra_kwargs as **kwargs.
+            kwargs.update(self.default_args)
+
             try: # Lazily load self.func.
-                return self.func, args
+                return self.func, args, kwargs
             except AttributeError:
                 self.func = self.get_callback()
-            return self.func, args
+            return self.func, args, kwargs
 
     def get_callback(self):
         mod_name, func_name = get_mod_func(self.callback)
         try:
             return getattr(__import__(mod_name, '', '', ['']), func_name)
-        except (ImportError, AttributeError):
-            raise ViewDoesNotExist, self.callback
+        except ImportError, e:
+            raise ViewDoesNotExist, "Could not import %s. Error was: %s" % (mod_name, str(e))
+        except AttributeError, e:
+            raise ViewDoesNotExist, "Tried %s in module %s. Error was: %s" % (func_name, mod_name, str(e))
 
-class RegexURLMultiplePattern:
-    def __init__(self, regex, urlconf_module):
+class RegexURLResolver(object):
+    def __init__(self, regex, urlconf_name):
+        # regex is a string representing a regular expression.
+        # urlconf_name is a string representing the module containing urlconfs.
         self.regex = re.compile(regex)
-        # urlconf_module is a string representing the module containing urlconfs.
-        self.urlconf_module = urlconf_module
+        self.urlconf_name = urlconf_name
 
-    def search(self, path):
+    def resolve(self, path):
+        tried = []
         match = self.regex.search(path)
         if match:
             new_path = path[match.end():]
-            try: # Lazily load self.url_patterns.
-                self.url_patterns
-            except AttributeError:
-                self.url_patterns = self.get_url_patterns()
-            for pattern in self.url_patterns:
-                sub_match = pattern.search(new_path)
-                if sub_match:
-                    return sub_match
+            for pattern in self.urlconf_module.urlpatterns:
+                try:
+                    sub_match = pattern.resolve(new_path)
+                except Resolver404, e:
+                    tried.extend([(pattern.regex.pattern + '   ' + t) for t in e.args[0]['tried']])
+                else:
+                    if sub_match:
+                        return sub_match[0], sub_match[1], dict(match.groupdict(), **sub_match[2])
+                    tried.append(pattern.regex.pattern)
+            raise Resolver404, {'tried': tried, 'path': new_path}
 
-    def get_url_patterns(self):
-        return __import__(self.urlconf_module, '', '', ['']).urlpatterns
+    def _get_urlconf_module(self):
+        try:
+            return self._urlconf_module
+        except AttributeError:
+            try:
+                self._urlconf_module = __import__(self.urlconf_name, '', '', [''])
+            except ValueError, e:
+                # Invalid urlconf_name, such as "foo.bar." (note trailing period)
+                raise ImproperlyConfigured, "Error while importing URLconf %r: %s" % (self.urlconf_name, e)
+            return self._urlconf_module
+    urlconf_module = property(_get_urlconf_module)
 
-class RegexURLResolver:
-    def __init__(self, url_patterns):
-        # url_patterns is a list of RegexURLPattern or RegexURLMultiplePattern objects.
-        self.url_patterns = url_patterns
+    def _get_url_patterns(self):
+        return self.urlconf_module.urlpatterns
+    url_patterns = property(_get_url_patterns)
 
-    def resolve(self, app_path):
-        # app_path is the full requested Web path. This is assumed to have a
-        # leading slash but doesn't necessarily have a trailing slash.
-        # Examples:
-        #     "/news/2005/may/"
-        #     "/news/"
-        #     "/polls/latest"
-        # A home (root) page is represented by "/".
-        app_path = app_path[1:] # Trim leading slash.
-        for pattern in self.url_patterns:
-            match = pattern.search(app_path)
-            if match:
-                return match
-        # None of the regexes matched, so raise a 404.
-        raise Http404, app_path
-
-class Error404Resolver:
-    def __init__(self, callback):
-        self.callback = callback
-
-    def resolve(self):
-        mod_name, func_name = get_mod_func(self.callback)
+    def _resolve_special(self, view_type):
+        callback = getattr(self.urlconf_module, 'handler%s' % view_type)
+        mod_name, func_name = get_mod_func(callback)
         try:
             return getattr(__import__(mod_name, '', '', ['']), func_name), {}
-        except (ImportError, AttributeError):
-            raise ViewDoesNotExist, self.callback
+        except (ImportError, AttributeError), e:
+            raise ViewDoesNotExist, "Tried %s. Error was: %s" % (callback, str(e))
+
+    def resolve404(self):
+        return self._resolve_special('404')
+
+    def resolve500(self):
+        return self._resolve_special('500')

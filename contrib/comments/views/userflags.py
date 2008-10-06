@@ -1,9 +1,8 @@
-from django.core import template_loader
-from django.core.extensions import CMSContext as Context
+from django.core.extensions import DjangoContext, render_to_response
 from django.core.exceptions import Http404
 from django.models.comments import comments, moderatordeletions, userflags
 from django.views.decorators.auth import login_required
-from django.utils.httpwrappers import HttpResponse, HttpResponseRedirect
+from django.utils.httpwrappers import HttpResponseRedirect
 from django.conf.settings import SITE_ID
 
 def flag(request, comment_id):
@@ -16,29 +15,21 @@ def flag(request, comment_id):
             the flagged `comments.comments` object
     """
     try:
-        comment = comments.get_object(id__exact=comment_id, site_id__exact=SITE_ID)
+        comment = comments.get_object(pk=comment_id, site__id__exact=SITE_ID)
     except comments.CommentDoesNotExist:
         raise Http404
     if request.POST:
         userflags.flag(comment, request.user)
         return HttpResponseRedirect('%sdone/' % request.path)
-    t = template_loader.get_template('comments/flag_verify')
-    c = Context(request, {
-        'comment': comment,
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('comments/flag_verify', {'comment': comment}, context_instance=DjangoContext(request))
 flag = login_required(flag)
 
 def flag_done(request, comment_id):
     try:
-        comment = comments.get_object(id__exact=comment_id, site_id__exact=SITE_ID)
+        comment = comments.get_object(pk=comment_id, site__id__exact=SITE_ID)
     except comments.CommentDoesNotExist:
         raise Http404
-    t = template_loader.get_template('comments/flag_done')
-    c = Context(request, {
-        'comment': comment,
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('comments/flag_done', {'comment': comment}, context_instance=DjangoContext(request))
 
 def delete(request, comment_id):
     """
@@ -50,7 +41,7 @@ def delete(request, comment_id):
             the flagged `comments.comments` object
     """
     try:
-        comment = comments.get_object(id__exact=comment_id, site_id__exact=SITE_ID)
+        comment = comments.get_object(pk=comment_id, site__id__exact=SITE_ID)
     except comments.CommentDoesNotExist:
         raise Http404
     if not comments.user_is_moderator(request.user):
@@ -63,20 +54,12 @@ def delete(request, comment_id):
             m = moderatordeletions.ModeratorDeletion(None, request.user.id, comment.id, None)
             m.save()
         return HttpResponseRedirect('%sdone/' % request.path)
-    t = template_loader.get_template('comments/delete_verify')
-    c = Context(request, {
-        'comment': comment,
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('comments/delete_verify', {'comment': comment}, context_instance=DjangoContext(request))
 delete = login_required(delete)
 
 def delete_done(request, comment_id):
     try:
-        comment = comments.get_object(id__exact=comment_id, site_id__exact=SITE_ID)
+        comment = comments.get_object(pk=comment_id, site__id__exact=SITE_ID)
     except comments.CommentDoesNotExist:
         raise Http404
-    t = template_loader.get_template('comments/delete_done')
-    c = Context(request, {
-        'comment': comment,
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('comments/delete_done', {'comment': comment}, context_instance=DjangoContext(request))

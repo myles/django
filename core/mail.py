@@ -1,10 +1,18 @@
-"""
-Use this for e-mailing
-"""
+# Use this module for e-mailing.
 
-from django.conf.settings import DEFAULT_FROM_EMAIL, EMAIL_HOST
+from django.conf.settings import DEFAULT_FROM_EMAIL, EMAIL_HOST, EMAIL_SUBJECT_PREFIX
 from email.MIMEText import MIMEText
 import smtplib
+
+class BadHeaderError(ValueError):
+    pass
+
+class SafeMIMEText(MIMEText):
+    def __setitem__(self, name, val):
+        "Forbids multi-line headers, to prevent header injection."
+        if '\n' in val or '\r' in val:
+            raise BadHeaderError, "Header values can't contain newlines (got %r for header %r)" % (val, name)
+        MIMEText.__setitem__(self, name, val)
 
 def send_mail(subject, message, from_email, recipient_list, fail_silently=False):
     """
@@ -31,7 +39,7 @@ def send_mass_mail(datatuple, fail_silently=False):
         if not recipient_list:
             continue
         from_email = from_email or DEFAULT_FROM_EMAIL
-        msg = MIMEText(message)
+        msg = SafeMIMEText(message)
         msg['Subject'] = subject
         msg['From'] = from_email
         msg['To'] = ', '.join(recipient_list)
@@ -43,9 +51,9 @@ def send_mass_mail(datatuple, fail_silently=False):
 def mail_admins(subject, message, fail_silently=False):
     "Sends a message to the admins, as defined by the ADMINS constant in settings.py."
     from django.conf.settings import ADMINS, SERVER_EMAIL
-    send_mail('[CMS] ' + subject, message, SERVER_EMAIL, [a[1] for a in ADMINS], fail_silently)
+    send_mail(EMAIL_SUBJECT_PREFIX + subject, message, SERVER_EMAIL, [a[1] for a in ADMINS], fail_silently)
 
 def mail_managers(subject, message, fail_silently=False):
     "Sends a message to the managers, as defined by the MANAGERS constant in settings.py"
     from django.conf.settings import MANAGERS, SERVER_EMAIL
-    send_mail('[CMS] ' + subject, message, SERVER_EMAIL, [a[1] for a in MANAGERS], fail_silently)
+    send_mail(EMAIL_SUBJECT_PREFIX + subject, message, SERVER_EMAIL, [a[1] for a in MANAGERS], fail_silently)

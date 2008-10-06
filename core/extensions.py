@@ -1,22 +1,66 @@
-"Specialized Context and ModPythonRequest classes for our CMS. Use these!"
+# This module collects helper functions and classes that "span" multiple levels
+# of MVC. In other words, these functions/classes introduce controlled coupling
+# for convenience's sake.
 
-from django.core.template import Context
-from django.utils.httpwrappers import ModPythonRequest
-from django.conf.settings import DEBUG, INTERNAL_IPS
-from pprint import pformat
+from django.core.exceptions import Http404, ImproperlyConfigured, ObjectDoesNotExist
+from django.core.template import Context, loader
+from django.conf.settings import TEMPLATE_CONTEXT_PROCESSORS
+from django.utils.httpwrappers import HttpResponse
 
-class CMSContext(Context):
-    """This subclass of template.Context automatically populates 'user' and
-    'messages' in the context. Use this."""
-    def __init__(self, request, dict={}):
+_standard_context_processors = None
+
+# This is a function rather than module-level procedural code because we only
+# want it to execute if somebody uses DjangoContext.
+def get_standard_processors():
+    global _standard_context_processors
+    if _standard_context_processors is None:
+        processors = []
+        for path in TEMPLATE_CONTEXT_PROCESSORS:
+            i = path.rfind('.')
+            module, attr = path[:i], path[i+1:]
+            try:
+                mod = __import__(module, '', '', [attr])
+            except ImportError, e:
+                raise ImproperlyConfigured, 'Error importing request processor module %s: "%s"' % (module, e)
+            try:
+                func = getattr(mod, attr)
+            except AttributeError:
+                raise ImproperlyConfigured, 'Module "%s" does not define a "%s" callable request processor' % (module, attr)
+            processors.append(func)
+        _standard_context_processors = tuple(processors)
+    return _standard_context_processors
+
+def render_to_response(*args, **kwargs):
+    return HttpResponse(loader.render_to_string(*args, **kwargs))
+load_and_render = render_to_response # For backwards compatibility.
+
+def get_object_or_404(mod, **kwargs):
+    try:
+        return mod.get_object(**kwargs)
+    except ObjectDoesNotExist:
+        raise Http404
+
+def get_list_or_404(mod, **kwargs):
+    obj_list = mod.get_list(**kwargs)
+    if not obj_list:
+        raise Http404
+    return obj_list
+
+class DjangoContext(Context):
+    """
+    This subclass of template.Context automatically populates itself using
+    the processors defined in TEMPLATE_CONTEXT_PROCESSORS.
+    Additional processors can be specified as a list of callables
+    using the "processors" keyword argument.
+    """
+    def __init__(self, request, dict=None, processors=None):
         Context.__init__(self, dict)
-        self['user'] = request.user
-        self['messages'] = request.user.get_and_delete_messages()
-        self['perms'] = PermWrapper(request.user)
-        if DEBUG and request.META['REMOTE_ADDR'] in INTERNAL_IPS:
-            self['debug'] = True
-            from django.core import db
-            self['sql_queries'] = db.db.queries
+        if processors is None:
+            processors = ()
+        else:
+            processors = tuple(processors)
+        for processor in get_standard_processors() + processors:
+            self.update(processor(request))
 
 # PermWrapper and PermLookupDict proxy the permissions system into objects that
 # the template system can understand.
@@ -36,44 +80,3 @@ class PermWrapper:
         self.user = user
     def __getitem__(self, module_name):
         return PermLookupDict(self.user, module_name)
-
-class CMSRequest(ModPythonRequest):
-    "A special version of ModPythonRequest with support for CMS sessions"
-    def __init__(self, req):
-        ModPythonRequest.__init__(self, req)
-
-    def __repr__(self):
-        return '<CMSRequest\npath:%s,\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s,\nuser:%s>' % \
-            (self.path, pformat(self.GET), pformat(self.POST), pformat(self.COOKIES),
-            pformat(self.META), pformat(self.user))
-
-    def _load_session_and_user(self):
-        from django.models.auth import sessions
-        from django.conf.settings import AUTH_SESSION_COOKIE
-        session_cookie = self.COOKIES.get(AUTH_SESSION_COOKIE, '')
-        try:
-            self._session = sessions.get_session_from_cookie(session_cookie)
-            self._user = self._session.get_user()
-        except sessions.SessionDoesNotExist:
-            from django.parts.auth import anonymoususers
-            self._session = None
-            self._user = anonymoususers.AnonymousUser()
-
-    def _get_session(self):
-        if not hasattr(self, '_session'):
-            self._load_session_and_user()
-        return self._session
-
-    def _set_session(self, session):
-        self._session = session
-
-    def _get_user(self):
-        if not hasattr(self, '_user'):
-            self._load_session_and_user()
-        return self._user
-
-    def _set_user(self, user):
-        self._user = user
-
-    session = property(_get_session, _set_session)
-    user = property(_get_user, _set_user)

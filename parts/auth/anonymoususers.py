@@ -1,8 +1,5 @@
-"""
-Anonymous users
-"""
-
 class AnonymousUser:
+    id = None
 
     def __init__(self):
         pass
@@ -37,12 +34,11 @@ class AnonymousUser:
     def has_perm(self, perm):
         return False
 
+    def has_module_perms(self, module):
+        return False
+
     def get_and_delete_messages(self):
         return []
-
-    def add_session(self, session_md5, start_time):
-        "Creates Session for this User, saves it, and returns the new object"
-        raise NotImplementedError
 
     def is_anonymous(self):
         return True

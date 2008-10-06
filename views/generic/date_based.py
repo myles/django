@@ -1,12 +1,14 @@
-from django.core import template_loader
+from django.core.template import loader
 from django.core.exceptions import Http404, ObjectDoesNotExist
-from django.core.extensions import CMSContext as Context
+from django.core.extensions import DjangoContext
 from django.core.xheaders import populate_xheaders
 from django.models import get_module
 from django.utils.httpwrappers import HttpResponse
 import datetime, time
 
-def archive_index(request, app_label, module_name, date_field, num_latest=15, template_name=None, extra_lookup_kwargs={}, extra_context=None):
+def archive_index(request, app_label, module_name, date_field, num_latest=15,
+        template_name=None, template_loader=loader, extra_lookup_kwargs={},
+        extra_context={}, allow_empty=False, context_processors=None):
     """
     Generic top-level archive of date-based objects.
 
@@ -21,13 +23,13 @@ def archive_index(request, app_label, module_name, date_field, num_latest=15, te
     lookup_kwargs = {'%s__lte' % date_field: datetime.datetime.now()}
     lookup_kwargs.update(extra_lookup_kwargs)
     date_list = getattr(mod, "get_%s_list" % date_field)('year', **lookup_kwargs)[::-1]
-    if not date_list:
+    if not date_list and not allow_empty:
         raise Http404("No %s.%s available" % (app_label, module_name))
 
-    if num_latest:
+    if date_list and num_latest:
         lookup_kwargs.update({
             'limit': num_latest,
-            'order_by': ((date_field, 'DESC'),),
+            'order_by': ('-' + date_field,),
         })
         latest = mod.get_list(**lookup_kwargs)
     else:
@@ -36,15 +38,20 @@ def archive_index(request, app_label, module_name, date_field, num_latest=15, te
     if not template_name:
         template_name = "%s/%s_archive" % (app_label, module_name)
     t = template_loader.get_template(template_name)
-    c = Context(request, {
+    c = DjangoContext(request, {
         'date_list' : date_list,
         'latest' : latest,
-    })
-    if extra_context:
-        c.update(extra_context)
+    }, context_processors)
+    for key, value in extra_context.items():
+        if callable(value):
+            c[key] = value()
+        else:
+            c[key] = value
     return HttpResponse(t.render(c))
 
-def archive_year(request, year, app_label, module_name, date_field, template_name=None, extra_lookup_kwargs={}, extra_context=None):
+def archive_year(request, year, app_label, module_name, date_field,
+        template_name=None, template_loader=loader, extra_lookup_kwargs={},
+        extra_context={}, context_processors=None):
     """
     Generic yearly archive view.
 
@@ -68,15 +75,20 @@ def archive_year(request, year, app_label, module_name, date_field, template_nam
     if not template_name:
         template_name = "%s/%s_archive_year" % (app_label, module_name)
     t = template_loader.get_template(template_name)
-    c = Context(request, {
+    c = DjangoContext(request, {
         'date_list': date_list,
         'year': year,
-    })
-    if extra_context:
-        c.update(extra_context)
+    }, context_processors)
+    for key, value in extra_context.items():
+        if callable(value):
+            c[key] = value()
+        else:
+            c[key] = value
     return HttpResponse(t.render(c))
 
-def archive_month(request, year, month, app_label, module_name, date_field, template_name=None, extra_lookup_kwargs={}, extra_context=None):
+def archive_month(request, year, month, app_label, module_name, date_field,
+        month_format='%b', template_name=None, template_loader=loader,
+        extra_lookup_kwargs={}, extra_context={}, context_processors=None):
     """
     Generic monthly archive view.
 
@@ -88,24 +100,21 @@ def archive_month(request, year, month, app_label, module_name, date_field, temp
             list of objects published in the given month
     """
     try:
-        date = datetime.date(*time.strptime(year+month, '%Y%b')[:3])
+        date = datetime.date(*time.strptime(year+month, '%Y'+month_format)[:3])
     except ValueError:
         raise Http404
+
     mod = get_module(app_label, module_name)
     now = datetime.datetime.now()
     # Calculate first and last day of month, for use in a date-range lookup.
     first_day = date.replace(day=1)
-    last_day = date
-    for i in (31, 30, 29, 28):
-        try:
-            last_day = last_day.replace(day=i)
-        except ValueError:
-            continue
-        else:
-            break
+    if first_day.month == 12:
+        last_day = first_day.replace(year=first_day.year + 1, month=1)
+    else:
+        last_day = first_day.replace(month=first_day.month + 1)
     lookup_kwargs = {'%s__range' % date_field: (first_day, last_day)}
     # Only bother to check current date if the month isn't in the past.
-    if date >= now:
+    if last_day >= now.date():
         lookup_kwargs['%s__lte' % date_field] = now
     lookup_kwargs.update(extra_lookup_kwargs)
     object_list = mod.get_list(**lookup_kwargs)
@@ -114,15 +123,21 @@ def archive_month(request, year, month, app_label, module_name, date_field, temp
     if not template_name:
         template_name = "%s/%s_archive_month" % (app_label, module_name)
     t = template_loader.get_template(template_name)
-    c = Context(request, {
+    c = DjangoContext(request, {
         'object_list': object_list,
         'month': date,
-    })
-    if extra_context:
-        c.update(extra_context)
+    }, context_processors)
+    for key, value in extra_context.items():
+        if callable(value):
+            c[key] = value()
+        else:
+            c[key] = value
     return HttpResponse(t.render(c))
 
-def archive_day(request, year, month, day, app_label, module_name, date_field, template_name=None, extra_lookup_kwargs={}, extra_context=None, allow_empty=False):
+def archive_day(request, year, month, day, app_label, module_name, date_field,
+        month_format='%b', day_format='%d', template_name=None,
+        template_loader=loader, extra_lookup_kwargs={}, extra_context={},
+        allow_empty=False, context_processors=None):
     """
     Generic daily archive view.
 
@@ -138,16 +153,17 @@ def archive_day(request, year, month, day, app_label, module_name, date_field, t
             (datetime) the next day, or None if the current day is today
     """
     try:
-        date = datetime.date(*time.strptime(year+month+day, '%Y%b%d')[:3])
+        date = datetime.date(*time.strptime(year+month+day, '%Y'+month_format+day_format)[:3])
     except ValueError:
         raise Http404
+
     mod = get_module(app_label, module_name)
     now = datetime.datetime.now()
     lookup_kwargs = {
         '%s__range' % date_field: (datetime.datetime.combine(date, datetime.time.min), datetime.datetime.combine(date, datetime.time.max)),
     }
     # Only bother to check current date if the date isn't in the past.
-    if date >= now:
+    if date >= now.date():
         lookup_kwargs['%s__lte' % date_field] = now
     lookup_kwargs.update(extra_lookup_kwargs)
     object_list = mod.get_list(**lookup_kwargs)
@@ -156,14 +172,17 @@ def archive_day(request, year, month, day, app_label, module_name, date_field, t
     if not template_name:
         template_name = "%s/%s_archive_day" % (app_label, module_name)
     t = template_loader.get_template(template_name)
-    c = Context(request, {
+    c = DjangoContext(request, {
         'object_list': object_list,
         'day': date,
         'previous_day': date - datetime.timedelta(days=1),
         'next_day': (date < datetime.date.today()) and (date + datetime.timedelta(days=1)) or None,
-    })
-    if extra_context:
-        c.update(extra_context)
+    }, context_processors)
+    for key, value in extra_context.items():
+        if callable(value):
+            c[key] = value()
+        else:
+            c[key] = value
     return HttpResponse(t.render(c))
 
 def archive_today(request, **kwargs):
@@ -178,7 +197,11 @@ def archive_today(request, **kwargs):
     })
     return archive_day(request, **kwargs)
 
-def object_detail(request, year, month, day, app_label, module_name, date_field, object_id=None, slug=None, slug_field=None, template_name=None, extra_lookup_kwargs={}, extra_context=None):
+def object_detail(request, year, month, day, app_label, module_name, date_field,
+        month_format='%b', day_format='%d', object_id=None, slug=None,
+        slug_field=None, template_name=None, template_name_field=None,
+        template_loader=loader, extra_lookup_kwargs={}, extra_context={},
+        context_processors=None):
     """
     Generic detail view from year/month/day/slug or year/month/day/id structure.
 
@@ -188,16 +211,17 @@ def object_detail(request, year, month, day, app_label, module_name, date_field,
             the object to be detailed
     """
     try:
-        date = datetime.date(*time.strptime(year+month+day, '%Y%b%d')[:3])
+        date = datetime.date(*time.strptime(year+month+day, '%Y'+month_format+day_format)[:3])
     except ValueError:
         raise Http404
+
     mod = get_module(app_label, module_name)
     now = datetime.datetime.now()
     lookup_kwargs = {
         '%s__range' % date_field: (datetime.datetime.combine(date, datetime.time.min), datetime.datetime.combine(date, datetime.time.max)),
     }
     # Only bother to check current date if the date isn't in the past.
-    if date >= now:
+    if date >= now.date():
         lookup_kwargs['%s__lte' % date_field] = now
     if object_id:
         lookup_kwargs['%s__exact' % mod.Klass._meta.pk.name] = object_id
@@ -212,12 +236,19 @@ def object_detail(request, year, month, day, app_label, module_name, date_field,
         raise Http404("%s.%s does not exist for %s" % (app_label, module_name, lookup_kwargs))
     if not template_name:
         template_name = "%s/%s_detail" % (app_label, module_name)
-    t = template_loader.get_template(template_name)
-    c = Context(request, {
+    if template_name_field:
+        template_name_list = [getattr(object, template_name_field), template_name]
+        t = template_loader.select_template(template_name_list)
+    else:
+        t = template_loader.get_template(template_name)
+    c = DjangoContext(request, {
         'object': object,
-    })
-    if extra_context:
-        c.update(extra_context)
+    }, context_processors)
+    for key, value in extra_context.items():
+        if callable(value):
+            c[key] = value()
+        else:
+            c[key] = value
     response = HttpResponse(t.render(c))
     populate_xheaders(request, response, app_label, module_name, getattr(object, object._meta.pk.name))
     return response

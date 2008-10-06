@@ -1,14 +1,15 @@
-from django.core import formfields, template_loader, validators
+from django.core import formfields, validators
 from django.core.mail import mail_admins, mail_managers
 from django.core.exceptions import Http404, ObjectDoesNotExist
-from django.core.extensions import CMSContext as Context
-from django.models.auth import sessions
+from django.core.extensions import DjangoContext, render_to_response
+from django.models.auth import users
 from django.models.comments import comments, freecomments
 from django.models.core import contenttypes
 from django.parts.auth.formfields import AuthenticationForm
-from django.utils.httpwrappers import HttpResponse, HttpResponseRedirect
+from django.utils.httpwrappers import HttpResponseRedirect
 from django.utils.text import normalize_newlines
 from django.conf.settings import BANNED_IPS, COMMENTS_ALLOW_PROFANITIES, COMMENTS_SKETCHY_USERS_GROUP, COMMENTS_FIRST_FEW, SITE_ID
+from django.utils.translation import ngettext
 import base64, datetime
 
 COMMENTS_PER_PAGE = 20
@@ -21,7 +22,7 @@ class PublicCommentManipulator(AuthenticationForm):
         choices = [(c, c) for c in ratings_range]
         def get_validator_list(rating_num):
             if rating_num <= num_rating_choices:
-                return [validators.RequiredIfOtherFieldsGiven(['rating%d' % i for i in range(1, 9) if i != rating_num], "This rating is required because you've entered at least one other rating.")]
+                return [validators.RequiredIfOtherFieldsGiven(['rating%d' % i for i in range(1, 9) if i != rating_num], _("This rating is required because you've entered at least one other rating."))]
             else:
                 return []
         self.fields.extend([
@@ -86,8 +87,8 @@ class PublicCommentManipulator(AuthenticationForm):
     def save(self, new_data):
         today = datetime.date.today()
         c = self.get_comment(new_data)
-        for old in comments.get_list(content_type_id__exact=new_data["content_type_id"],
-            object_id__exact=new_data["object_id"], user_id__exact=self.get_user_id()):
+        for old in comments.get_list(content_type__id__exact=new_data["content_type_id"],
+            object_id__exact=new_data["object_id"], user__id__exact=self.get_user_id()):
             # Check that this comment isn't duplicate. (Sometimes people post
             # comments twice by mistake.) If it is, fail silently by pretending
             # the comment was posted successfully.
@@ -105,11 +106,12 @@ class PublicCommentManipulator(AuthenticationForm):
         # If the commentor has posted fewer than COMMENTS_FIRST_FEW comments,
         # send the comment to the managers.
         if self.user_cache.get_comments_comment_count() <= COMMENTS_FIRST_FEW:
-            message = 'This comment was posted by a user who has posted fewer than %s comments:\n\n%s' % \
-                (COMMENTS_FIRST_FEW, c.get_as_text())
+            message = ngettext('This comment was posted by a user who has posted fewer than %(count)s comment:\n\n%(text)s',
+                'This comment was posted by a user who has posted fewer than %(count)s comments:\n\n%(text)s') % \
+                {'count': COMMENTS_FIRST_FEW, 'text': c.get_as_text()}
             mail_managers("Comment posted by rookie user", message)
         if COMMENTS_SKETCHY_USERS_GROUP and COMMENTS_SKETCHY_USERS_GROUP in [g.id for g in self.user_cache.get_group_list()]:
-            message = 'This comment was posted by a sketchy user:\n\n%s' % c.get_as_text()
+            message = _('This comment was posted by a sketchy user:\n\n%(text)s') % {'text': c.get_as_text()}
             mail_managers("Comment posted by sketchy user (%s)" % self.user_cache.username, c.get_as_text())
         return c
 
@@ -141,7 +143,7 @@ class PublicFreeCommentManipulator(formfields.Manipulator):
         # Check that this comment isn't duplicate. (Sometimes people post
         # comments twice by mistake.) If it is, fail silently by pretending
         # the comment was posted successfully.
-        for old_comment in freecomments.get_list(content_type_id__exact=new_data["content_type_id"],
+        for old_comment in freecomments.get_list(content_type__id__exact=new_data["content_type_id"],
             object_id__exact=new_data["object_id"], person_name__exact=new_data["person_name"],
             submit_date__year=today.year, submit_date__month=today.month,
             submit_date__day=today.day):
@@ -181,15 +183,15 @@ def post_comment(request):
             choice of ratings
     """
     if not request.POST:
-        raise Http404, "Only POSTs are allowed"
+        raise Http404, _("Only POSTs are allowed")
     try:
         options, target, security_hash = request.POST['options'], request.POST['target'], request.POST['gonzo']
     except KeyError:
-        raise Http404, "One or more of the required fields wasn't submitted"
+        raise Http404, _("One or more of the required fields wasn't submitted")
     photo_options = request.POST.get('photo_options', '')
     rating_options = normalize_newlines(request.POST.get('rating_options', ''))
     if comments.get_security_hash(options, photo_options, rating_options, target) != security_hash:
-        raise Http404, "Somebody tampered with the comment form (security violation)"
+        raise Http404, _("Somebody tampered with the comment form (security violation)")
     # Now we can be assured the data is valid.
     if rating_options:
         rating_range, rating_choices = comments.get_rating_options(base64.decodestring(rating_options))
@@ -197,16 +199,15 @@ def post_comment(request):
         rating_range, rating_choices = [], []
     content_type_id, object_id = target.split(':') # target is something like '52:5157'
     try:
-        obj = contenttypes.get_object(id__exact=content_type_id).get_object_for_this_type(id__exact=object_id)
+        obj = contenttypes.get_object(pk=content_type_id).get_object_for_this_type(pk=object_id)
     except ObjectDoesNotExist:
-        raise Http404, "The comment form had an invalid 'target' parameter -- the object ID was invalid"
+        raise Http404, _("The comment form had an invalid 'target' parameter -- the object ID was invalid")
     option_list = options.split(',') # options is something like 'pa,ra'
     new_data = request.POST.copy()
     new_data['content_type_id'] = content_type_id
     new_data['object_id'] = object_id
-    new_data['ip_address'] = request.META['REMOTE_ADDR']
+    new_data['ip_address'] = request.META.get('REMOTE_ADDR')
     new_data['is_public'] = comments.IS_PUBLIC in option_list
-    response = HttpResponse()
     manipulator = PublicCommentManipulator(request.user,
         ratings_required=comments.RATINGS_REQUIRED in option_list,
         ratings_range=rating_range,
@@ -215,7 +216,7 @@ def post_comment(request):
     # If user gave correct username/password and wasn't already logged in, log them in
     # so they don't have to enter a username/password again.
     if manipulator.get_user() and new_data.has_key('password') and manipulator.get_user().check_password(new_data['password']):
-        sessions.start_web_session(manipulator.get_user_id(), request, response)
+        request.session[users.SESSION_KEY] = manipulator.get_user_id()
     if errors or request.POST.has_key('preview'):
         class CommentFormWrapper(formfields.FormWrapper):
             def __init__(self, manipulator, new_data, errors, rating_choices):
@@ -228,8 +229,7 @@ def post_comment(request):
                 return field_list
         comment = errors and '' or manipulator.get_comment(new_data)
         comment_form = CommentFormWrapper(manipulator, new_data, errors, rating_choices)
-        t = template_loader.get_template('comments/preview')
-        c = Context(request, {
+        return render_to_response('comments/preview', {
             'comment': comment,
             'comment_form': comment_form,
             'options': options,
@@ -240,7 +240,7 @@ def post_comment(request):
             'ratings_required': comments.RATINGS_REQUIRED in option_list,
             'rating_range': rating_range,
             'rating_choices': rating_choices,
-        })
+        }, context_instance=DjangoContext(request))
     elif request.POST.has_key('post'):
         # If the IP is banned, mail the admins, do NOT save the comment, and
         # serve up the "Thanks for posting" page as if the comment WAS posted.
@@ -251,9 +251,7 @@ def post_comment(request):
             comment = manipulator.save(new_data)
         return HttpResponseRedirect("/comments/posted/?c=%s:%s" % (content_type_id, object_id))
     else:
-        raise Http404, "The comment form didn't provide either 'preview' or 'post'"
-    response.write(t.render(c))
-    return response
+        raise Http404, _("The comment form didn't provide either 'preview' or 'post'")
 
 def post_free_comment(request):
     """
@@ -276,38 +274,36 @@ def post_free_comment(request):
             post a comment).
     """
     if not request.POST:
-        raise Http404, "Only POSTs are allowed"
+        raise Http404, _("Only POSTs are allowed")
     try:
         options, target, security_hash = request.POST['options'], request.POST['target'], request.POST['gonzo']
     except KeyError:
-        raise Http404, "One or more of the required fields wasn't submitted"
+        raise Http404, _("One or more of the required fields wasn't submitted")
     if comments.get_security_hash(options, '', '', target) != security_hash:
-        raise Http404, "Somebody tampered with the comment form (security violation)"
+        raise Http404, _("Somebody tampered with the comment form (security violation)")
     content_type_id, object_id = target.split(':') # target is something like '52:5157'
-    content_type = contenttypes.get_object(id__exact=content_type_id)
+    content_type = contenttypes.get_object(pk=content_type_id)
     try:
-        obj = content_type.get_object_for_this_type(id__exact=object_id)
+        obj = content_type.get_object_for_this_type(pk=object_id)
     except ObjectDoesNotExist:
-        raise Http404, "The comment form had an invalid 'target' parameter -- the object ID was invalid"
+        raise Http404, _("The comment form had an invalid 'target' parameter -- the object ID was invalid")
     option_list = options.split(',')
     new_data = request.POST.copy()
     new_data['content_type_id'] = content_type_id
     new_data['object_id'] = object_id
     new_data['ip_address'] = request.META['REMOTE_ADDR']
     new_data['is_public'] = comments.IS_PUBLIC in option_list
-    response = HttpResponse()
     manipulator = PublicFreeCommentManipulator()
     errors = manipulator.get_validation_errors(new_data)
     if errors or request.POST.has_key('preview'):
         comment = errors and '' or manipulator.get_comment(new_data)
-        t = template_loader.get_template('comments/free_preview')
-        c = Context(request, {
+        return render_to_response('comments/free_preview', {
             'comment': comment,
             'comment_form': formfields.FormWrapper(manipulator, new_data, errors),
             'options': options,
             'target': target,
             'hash': security_hash,
-        })
+        }, context_instance=DjangoContext(request))
     elif request.POST.has_key('post'):
         # If the IP is banned, mail the admins, do NOT save the comment, and
         # serve up the "Thanks for posting" page as if the comment WAS posted.
@@ -319,9 +315,7 @@ def post_free_comment(request):
             comment = manipulator.save(new_data)
         return HttpResponseRedirect("/comments/posted/?c=%s:%s" % (content_type_id, object_id))
     else:
-        raise Http404, "The comment form didn't provide either 'preview' or 'post'"
-    response.write(t.render(c))
-    return response
+        raise Http404, _("The comment form didn't provide either 'preview' or 'post'")
 
 def comment_was_posted(request):
     """
@@ -336,12 +330,8 @@ def comment_was_posted(request):
     if request.GET.has_key('c'):
         content_type_id, object_id = request.GET['c'].split(':')
         try:
-            content_type = contenttypes.get_object(id__exact=content_type_id)
-            obj = content_type.get_object_for_this_type(id__exact=object_id)
+            content_type = contenttypes.get_object(pk=content_type_id)
+            obj = content_type.get_object_for_this_type(pk=object_id)
         except ObjectDoesNotExist:
             pass
-    t = template_loader.get_template('comments/posted')
-    c = Context(request, {
-        'object': obj,
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('comments/posted', {'object': obj}, context_instance=DjangoContext(request))

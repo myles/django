@@ -1,4 +1,4 @@
-from django.models.auth import sessions, users
+from django.models.auth import users
 from django.core import formfields, validators
 
 class AuthenticationForm(formfields.Manipulator):
@@ -23,19 +23,19 @@ class AuthenticationForm(formfields.Manipulator):
         self.user_cache = None
 
     def hasCookiesEnabled(self, field_data, all_data):
-        if self.request and (not self.request.COOKIES.has_key(sessions.TEST_COOKIE_NAME) or self.request.COOKIES[sessions.TEST_COOKIE_NAME] != sessions.TEST_COOKIE_VALUE):
-            raise validators.ValidationError, "Your Web browser doesn't appear to have cookies enabled. Cookies are required for logging in."
+        if self.request and not self.request.session.test_cookie_worked():
+            raise validators.ValidationError, _("Your Web browser doesn't appear to have cookies enabled. Cookies are required for logging in.")
 
     def isValidUser(self, field_data, all_data):
         try:
             self.user_cache = users.get_object(username__exact=field_data)
         except users.UserDoesNotExist:
-            raise validators.ValidationError, "Please enter a correct username and password. Note that both fields are case-sensitive."
+            raise validators.ValidationError, _("Please enter a correct username and password. Note that both fields are case-sensitive.")
 
     def isValidPasswordForUser(self, field_data, all_data):
         if self.user_cache is not None and not self.user_cache.check_password(field_data):
             self.user_cache = None
-            raise validators.ValidationError, "Please enter a correct username and password. Note that both fields are case-sensitive."
+            raise validators.ValidationError, _("Please enter a correct username and password. Note that both fields are case-sensitive.")
 
     def get_user_id(self):
         if self.user_cache:

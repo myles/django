@@ -1,12 +1,20 @@
-from django.core import meta, validators
+import base64, md5, random, sys
+import cPickle as pickle
+from django.core import meta
+from django.utils.translation import gettext_lazy as _
 
 class Site(meta.Model):
-    db_table = 'sites'
-    fields = (
-        meta.CharField('domain', 'domain name', maxlength=100),
-        meta.CharField('name', 'display name', maxlength=50),
-    )
-    ordering = (('domain', 'ASC'),)
+    domain = meta.CharField(_('domain name'), maxlength=100)
+    name = meta.CharField(_('display name'), maxlength=50)
+    class META:
+        verbose_name = _('site')
+        verbose_name_plural = _('sites')
+        db_table = 'sites'
+        ordering = ('domain',)
+        admin = meta.Admin(
+            list_display = ('domain', 'name'),
+            search_fields = ('domain', 'name'),
+        )
 
     def __repr__(self):
         return self.domain
@@ -14,35 +22,37 @@ class Site(meta.Model):
     def _module_get_current():
         "Returns the current site, according to the SITE_ID constant."
         from django.conf.settings import SITE_ID
-        return get_object(id__exact=SITE_ID)
+        return get_object(pk=SITE_ID)
 
 class Package(meta.Model):
-    db_table = 'packages'
-    fields = (
-        meta.CharField('label', 'label', maxlength=20, primary_key=True),
-        meta.CharField('name', 'name', maxlength=30, unique=True),
-    )
-    ordering = (('name', 'ASC'),)
+    label = meta.CharField(_('label'), maxlength=20, primary_key=True)
+    name = meta.CharField(_('name'), maxlength=30, unique=True)
+    class META:
+        verbose_name = _('package')
+        verbose_name_plural = _('packages')
+        db_table = 'packages'
+        ordering = ('name',)
 
     def __repr__(self):
         return self.name
 
 class ContentType(meta.Model):
-    db_table = 'content_types'
-    fields = (
-        meta.CharField('name', 'name', maxlength=100),
-        meta.ForeignKey(Package, name='package'),
-        meta.CharField('python_module_name', 'Python module name', maxlength=50),
-    )
-    ordering = (('package', 'ASC'), ('name', 'ASC'),)
-    unique_together = (('package', 'python_module_name'),)
+    name = meta.CharField(_('name'), maxlength=100)
+    package = meta.ForeignKey(Package, db_column='package')
+    python_module_name = meta.CharField(_('python module name'), maxlength=50)
+    class META:
+        verbose_name = _('content type')
+        verbose_name_plural = _('content types')
+        db_table = 'content_types'
+        ordering = ('package', 'name')
+        unique_together = (('package', 'python_module_name'),)
 
     def __repr__(self):
-        return "%s | %s" % (self.package, self.name)
+        return "%s | %s" % (self.package_id, self.name)
 
     def get_model_module(self):
         "Returns the Python model module for accessing this type of content."
-        return __import__('django.models.%s.%s' % (self.package, self.python_module_name), '', '', [''])
+        return __import__('django.models.%s.%s' % (self.package_id, self.python_module_name), '', '', [''])
 
     def get_object_for_this_type(self, **kwargs):
         """
@@ -53,55 +63,59 @@ class ContentType(meta.Model):
         """
         return self.get_model_module().get_object(**kwargs)
 
-class Redirect(meta.Model):
-    db_table = 'redirects'
-    fields = (
-        meta.ForeignKey(Site, radio_admin=meta.VERTICAL),
-        meta.CharField('old_path', 'redirect from', maxlength=200, db_index=True,
-            help_text="This should be an absolute path, excluding the domain name. Example: '/events/search/'."),
-        meta.CharField('new_path', 'redirect to', maxlength=200, blank=True,
-            help_text="This can be either an absolute path (as above) or a full URL starting with 'http://'."),
-    )
-    unique_together=(('site_id', 'old_path'),)
-    ordering = (('old_path', 'ASC'),)
-    admin = meta.Admin(
-        fields = (
-            (None, {'fields': ('site_id', 'old_path', 'new_path')}),
-        ),
-        list_display = ('__repr__',),
-        list_filter = ('site_id',),
-        search_fields = ('old_path', 'new_path'),
-    )
+class Session(meta.Model):
+    session_key = meta.CharField(_('session key'), maxlength=40, primary_key=True)
+    session_data = meta.TextField(_('session data'))
+    expire_date = meta.DateTimeField(_('expire date'))
+    class META:
+        verbose_name = _('session')
+        verbose_name_plural = _('sessions')
+        module_constants = {
+            'base64': base64,
+            'md5': md5,
+            'pickle': pickle,
+            'random': random,
+            'sys': sys,
+        }
 
-    def __repr__(self):
-        return "%s ---> %s" % (self.old_path, self.new_path)
+    def get_decoded(self):
+        from django.conf.settings import SECRET_KEY
+        encoded_data = base64.decodestring(self.session_data)
+        pickled, tamper_check = encoded_data[:-32], encoded_data[-32:]
+        if md5.new(pickled + SECRET_KEY).hexdigest() != tamper_check:
+            from django.core.exceptions import SuspiciousOperation
+            raise SuspiciousOperation, "User tampered with session cookie."
+        try:
+            return pickle.loads(pickled)
+        # Unpickling can cause a variety of exceptions. If something happens,
+        # just return an empty dictionary (an empty session).
+        except:
+            return {}
 
-class FlatFile(meta.Model):
-    db_table = 'flatfiles'
-    fields = (
-        meta.CharField('url', 'URL', maxlength=100, validator_list=[validators.isAlphaNumericURL],
-            help_text="Example: '/about/contact/'. Make sure to have leading and trailing slashes."),
-        meta.CharField('title', 'title', maxlength=200),
-        meta.TextField('content', 'content', help_text="Full HTML is allowed."),
-        meta.BooleanField('enable_comments', 'enable comments'),
-        meta.CharField('template_name', 'template name', maxlength=70, blank=True,
-            help_text="Example: 'flatfiles/contact_page'. If this isn't provided, the system will use 'flatfiles/default'."),
-        meta.BooleanField('registration_required', 'registration required',
-            help_text="If this is checked, only logged-in users will be able to view the page."),
-        meta.ManyToManyField(Site),
-    )
-    ordering = (('url', 'ASC'),)
-    admin = meta.Admin(
-        fields = (
-            (None, {'fields': ('url', 'title', 'content', 'sites')}),
-            ('Advanced options', {'classes': 'collapse', 'fields': ('enable_comments', 'registration_required', 'template_name')}),
-        ),
-        list_filter = ('sites',),
-        search_fields = ('url', 'title'),
-    )
+    def _module_encode(session_dict):
+        "Returns the given session dictionary pickled and encoded as a string."
+        from django.conf.settings import SECRET_KEY
+        pickled = pickle.dumps(session_dict)
+        pickled_md5 = md5.new(pickled + SECRET_KEY).hexdigest()
+        return base64.encodestring(pickled + pickled_md5)
 
-    def __repr__(self):
-        return "%s -- %s" % (self.url, self.title)
+    def _module_get_new_session_key():
+        "Returns session key that isn't being used."
+        from django.conf.settings import SECRET_KEY
+        # The random module is seeded when this Apache child is created.
+        # Use person_id and SECRET_KEY as added salt.
+        while 1:
+            session_key = md5.new(str(random.randint(0, sys.maxint - 1)) + str(random.randint(0, sys.maxint - 1)) + SECRET_KEY).hexdigest()
+            try:
+                get_object(session_key__exact=session_key)
+            except SessionDoesNotExist:
+                break
+        return session_key
 
-    def get_absolute_url(self):
-        return self.url
+    def _module_save(session_key, session_dict, expire_date):
+        s = Session(session_key, encode(session_dict), expire_date)
+        if session_dict:
+            s.save()
+        else:
+            s.delete() # Clear sessions with no data.
+        return s

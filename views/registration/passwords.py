@@ -1,8 +1,9 @@
-from django.core import formfields, template_loader, validators
-from django.core.extensions import CMSContext as Context
+from django.core import formfields, validators
+from django.core.extensions import DjangoContext, render_to_response
+from django.core.template import Context, loader
 from django.models.auth import users
 from django.views.decorators.auth import login_required
-from django.utils.httpwrappers import HttpResponse, HttpResponseRedirect
+from django.utils.httpwrappers import HttpResponseRedirect
 
 class PasswordResetForm(formfields.Manipulator):
     "A form that lets a user request a password reset"
@@ -32,7 +33,7 @@ class PasswordResetForm(formfields.Manipulator):
             domain = current_site.domain
         else:
             site_name = domain = domain_override
-        t = template_loader.get_template('registration/password_reset_email')
+        t = loader.get_template('registration/password_reset_email')
         c = {
             'new_password': new_pass,
             'email': self.user_cache.email,
@@ -40,7 +41,7 @@ class PasswordResetForm(formfields.Manipulator):
             'site_name': site_name,
             'user': self.user_cache,
         }
-        send_mail('Password reset on %s' % site_name, t.render(c), None, [self.user_cache.email])
+        send_mail('Password reset on %s' % site_name, t.render(Context(c)), None, [self.user_cache.email])
 
 class PasswordChangeForm(formfields.Manipulator):
     "A form that lets a user change his password."
@@ -76,16 +77,11 @@ def password_reset(request, is_admin_site=False):
             else:
                 form.save()
             return HttpResponseRedirect('%sdone/' % request.path)
-    t = template_loader.get_template('registration/password_reset_form')
-    c = Context(request, {
-        'form': formfields.FormWrapper(form, new_data, errors),
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('registration/password_reset_form', {'form': formfields.FormWrapper(form, new_data, errors)},
+        context_instance=DjangoContext(request))
 
 def password_reset_done(request):
-    t = template_loader.get_template('registration/password_reset_done')
-    c = Context(request, {})
-    return HttpResponse(t.render(c))
+    return render_to_response('registration/password_reset_done', context_instance=DjangoContext(request))
 
 def password_change(request):
     new_data, errors = {}, {}
@@ -96,14 +92,9 @@ def password_change(request):
         if not errors:
             form.save(new_data)
             return HttpResponseRedirect('%sdone/' % request.path)
-    t = template_loader.get_template('registration/password_change_form')
-    c = Context(request, {
-        'form': formfields.FormWrapper(form, new_data, errors),
-    })
-    return HttpResponse(t.render(c))
+    return render_to_response('registration/password_change_form', {'form': formfields.FormWrapper(form, new_data, errors)},
+        context_instance=DjangoContext(request))
 password_change = login_required(password_change)
 
 def password_change_done(request):
-    t = template_loader.get_template('registration/password_change_done')
-    c = Context(request, {})
-    return HttpResponse(t.render(c))
+    return render_to_response('registration/password_change_done', context_instance=DjangoContext(request))

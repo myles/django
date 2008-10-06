@@ -1,8 +1,13 @@
 from Cookie import SimpleCookie
 from pprint import pformat
-import datastructures
+from urllib import urlencode
+from django.utils.datastructures import MultiValueDict
 
-DEFAULT_MIME_TYPE = 'text/html'
+try:
+    # The mod_python version is more efficient, so try importing it first.
+    from mod_python.util import parse_qsl
+except ImportError:
+    from cgi import parse_qsl
 
 class HttpRequest(object): # needs to be new-style class because subclasses define "property"s
     "A basic HTTP request"
@@ -21,106 +26,21 @@ class HttpRequest(object): # needs to be new-style class because subclasses defi
                 return d[key]
         raise KeyError, "%s not found in either POST or GET" % key
 
+    def has_key(self, key):
+        return self.GET.has_key(key) or self.POST.has_key(key)
+
     def get_full_path(self):
         return ''
 
-class ModPythonRequest(HttpRequest):
-    def __init__(self, req):
-        self._req = req
-        self.path = req.uri
-
-    def __repr__(self):
-        return '<ModPythonRequest\nGET:%s,\nPOST:%s,\nCOOKIES:%s,\nMETA:%s>' % \
-            (pformat(self.GET), pformat(self.POST), pformat(self.COOKIES),
-            pformat(self.META))
-
-    def get_full_path(self):
-        return '%s%s' % (self.path, self._req.args and ('?' + self._req.args) or '')
-
-    def _load_post_and_files(self):
-        "Populates self._post and self._files"
-        if self._req.headers_in.has_key('content-type') and self._req.headers_in['content-type'].startswith('multipart'):
-            self._post, self._files = parse_file_upload(self._req)
-        else:
-            self._post, self._files = QueryDict(self._req.read()), datastructures.MultiValueDict()
-
-    def _get_request(self):
-        if not hasattr(self, '_request'):
-           self._request = datastructures.MergeDict(self.POST, self.GET)
-        return self._request
-
-    def _get_get(self):
-        if not hasattr(self, '_get'):
-            self._get = QueryDict(self._req.args)
-        return self._get
-
-    def _set_get(self, get):
-        self._get = get
-
-    def _get_post(self):
-        if not hasattr(self, '_post'):
-            self._load_post_and_files()
-        return self._post
-
-    def _set_post(self, post):
-        self._post = post
-
-    def _get_cookies(self):
-        if not hasattr(self, '_cookies'):
-            self._cookies = parse_cookie(self._req.headers_in.get('cookie', ''))
-        return self._cookies
-
-    def _set_cookies(self, cookies):
-        self._cookies = cookies
-
-    def _get_files(self):
-        if not hasattr(self, '_files'):
-            self._load_post_and_files()
-        return self._files
-
-    def _get_meta(self):
-        "Lazy loader that returns self.META dictionary"
-        if not hasattr(self, '_meta'):
-            self._meta = {
-                'AUTH_TYPE':         self._req.ap_auth_type,
-                'CONTENT_LENGTH':    self._req.clength, # This may be wrong
-                'CONTENT_TYPE':      self._req.content_type, # This may be wrong
-                'GATEWAY_INTERFACE': 'CGI/1.1',
-                'PATH_INFO':         self._req.path_info,
-                'PATH_TRANSLATED':   None, # Not supported
-                'QUERY_STRING':      self._req.args,
-                'REMOTE_ADDR':       self._req.connection.remote_ip,
-                'REMOTE_HOST':       None, # DNS lookups not supported
-                'REMOTE_IDENT':      self._req.connection.remote_logname,
-                'REMOTE_USER':       self._req.user,
-                'REQUEST_METHOD':    self._req.method,
-                'SCRIPT_NAME':       None, # Not supported
-                'SERVER_NAME':       self._req.server.server_hostname,
-                'SERVER_PORT':       self._req.server.port,
-                'SERVER_PROTOCOL':   self._req.protocol,
-                'SERVER_SOFTWARE':   'mod_python'
-            }
-            for key, value in self._req.headers_in.items():
-                key = 'HTTP_' + key.upper().replace('-', '_')
-                self._meta[key] = value
-        return self._meta
-
-    GET = property(_get_get, _set_get)
-    POST = property(_get_post, _set_post)
-    COOKIES = property(_get_cookies, _set_cookies)
-    FILES = property(_get_files)
-    META = property(_get_meta)
-    REQUEST = property(_get_request)
-
-def parse_file_upload(req):
-    "Returns a tuple of (POST MultiValueDict, FILES MultiValueDict), given a mod_python req object"
+def parse_file_upload(header_dict, post_data):
+    "Returns a tuple of (POST MultiValueDict, FILES MultiValueDict)"
     import email, email.Message
     from cgi import parse_header
-    raw_message = '\r\n'.join(['%s:%s' % pair for pair in req.headers_in.items()])
-    raw_message += '\r\n\r\n' + req.read()
+    raw_message = '\r\n'.join(['%s:%s' % pair for pair in header_dict.items()])
+    raw_message += '\r\n\r\n' + post_data
     msg = email.message_from_string(raw_message)
-    POST = datastructures.MultiValueDict()
-    FILES = datastructures.MultiValueDict()
+    POST = MultiValueDict()
+    FILES = MultiValueDict()
     for submessage in msg.get_payload():
         if isinstance(submessage, email.Message.Message):
             name_dict = parse_header(submessage['Content-Disposition'])[1]
@@ -143,67 +63,68 @@ def parse_file_upload(req):
                 POST.appendlist(name_dict['name'], submessage.get_payload())
     return POST, FILES
 
-class QueryDict(datastructures.MultiValueDict):
+class QueryDict(MultiValueDict):
     """A specialized MultiValueDict that takes a query string when initialized.
     This is immutable unless you create a copy of it."""
     def __init__(self, query_string):
-        try:
-            from mod_python.util import parse_qsl
-        except ImportError:
-            from cgi import parse_qsl
-        if not query_string:
-            self.data = {}
-            self._keys = []
-        else:
-            self.data = {}
-            self._keys = []
-            for name, value in parse_qsl(query_string, True): # keep_blank_values=True
-                if name in self.data:
-                    self.data[name].append(value)
-                else:
-                    self.data[name] = [value]
-                if name not in self._keys:
-                    self._keys.append(name)
+        MultiValueDict.__init__(self)
+        self._mutable = True
+        for key, value in parse_qsl((query_string or ''), True): # keep_blank_values=True
+            self.appendlist(key, value)
         self._mutable = False
 
-    def __setitem__(self, key, value):
+    def _assert_mutable(self):
         if not self._mutable:
             raise AttributeError, "This QueryDict instance is immutable"
-        else:
-            self.data[key] = [value]
-            if not key in self._keys:
-                self._keys.append(key)
+
+    def _setitem_if_mutable(self, key, value):
+        self._assert_mutable()
+        MultiValueDict.__setitem__(self, key, value)
+    __setitem__ = _setitem_if_mutable
 
     def setlist(self, key, list_):
-        if not self._mutable:
-            raise AttributeError, "This QueryDict instance is immutable"
-        else:
-            self.data[key] = list_
-            if not key in self._keys:
-                self._keys.append(key)
+        self._assert_mutable()
+        MultiValueDict.setlist(self, key, list_)
+
+    def appendlist(self, key, value):
+        self._assert_mutable()
+        MultiValueDict.appendlist(self, key, value)
+
+    def update(self, other_dict):
+        self._assert_mutable()
+        MultiValueDict.update(self, other_dict)
+
+    def pop(self, key):
+        self._assert_mutable()
+        return MultiValueDict.pop(self, key)
+
+    def popitem(self):
+        self._assert_mutable()
+        return MultiValueDict.popitem(self)
+
+    def clear(self):
+        self._assert_mutable()
+        MultiValueDict.clear(self)
+
+    def setdefault(self, *args):
+        self._assert_mutable()
+        return MultiValueDict.setdefault(self, *args)
 
     def copy(self):
-        "Returns a mutable copy of this object"
-        cp = datastructures.MultiValueDict.copy(self)
+        "Returns a mutable copy of this object."
+        import copy
+        # Our custom __setitem__ must be disabled for copying machinery.
+        QueryDict.__setitem__ = dict.__setitem__
+        cp = copy.deepcopy(self)
+        QueryDict.__setitem__ = QueryDict._setitem_if_mutable
         cp._mutable = True
         return cp
 
-    def assert_synchronized(self):
-        assert(len(self._keys) == len(self.data.keys())), \
-            "QueryDict data structure is out of sync: %s %s" % (str(self._keys), str(self.data))
-
-    def items(self):
-        "Respect order preserved by self._keys"
-        self.assert_synchronized()
-        items = []
-        for key in self._keys:
-            if key in self.data:
-                items.append((key, self.data[key][0]))
-        return items
-
-    def keys(self):
-        self.assert_synchronized()
-        return self._keys
+    def urlencode(self):
+        output = []
+        for k, list_ in self.lists():
+            output.extend([urlencode({k: v}) for v in list_])
+        return '&'.join(output)
 
 def parse_cookie(cookie):
     if cookie == '':
@@ -217,7 +138,10 @@ def parse_cookie(cookie):
 
 class HttpResponse:
     "A basic HTTP response, with content and dictionary-accessed headers"
-    def __init__(self, content='', mimetype=DEFAULT_MIME_TYPE):
+    def __init__(self, content='', mimetype=None):
+        if not mimetype:
+            from django.conf.settings import DEFAULT_CONTENT_TYPE, DEFAULT_CHARSET
+            mimetype = "%s; charset=%s" % (DEFAULT_CONTENT_TYPE, DEFAULT_CHARSET)
         self.content = content
         self.headers = {'Content-Type':mimetype}
         self.cookies = SimpleCookie()
@@ -249,12 +173,18 @@ class HttpResponse:
                 return True
         return False
 
-    def set_cookie(self, key, value='', max_age=None, path='/', domain=None, secure=None):
+    def set_cookie(self, key, value='', max_age=None, expires=None, path='/', domain=None, secure=None):
         self.cookies[key] = value
-        for var in ('max_age', 'path', 'domain', 'secure'):
+        for var in ('max_age', 'path', 'domain', 'secure', 'expires'):
             val = locals()[var]
             if val is not None:
                 self.cookies[key][var.replace('_', '-')] = val
+
+    def delete_cookie(self, key):
+        try:
+            self.cookies[key]['max_age'] = 0
+        except KeyError:
+            pass
 
     def get_content_as_string(self, encoding):
         """
@@ -282,38 +212,33 @@ class HttpResponseRedirect(HttpResponse):
         self['Location'] = redirect_to
         self.status_code = 302
 
+class HttpResponsePermanentRedirect(HttpResponse):
+    def __init__(self, redirect_to):
+        HttpResponse.__init__(self)
+        self['Location'] = redirect_to
+        self.status_code = 301
+
 class HttpResponseNotModified(HttpResponse):
     def __init__(self):
         HttpResponse.__init__(self)
         self.status_code = 304
 
 class HttpResponseNotFound(HttpResponse):
-    def __init__(self, content='', mimetype=DEFAULT_MIME_TYPE):
-        HttpResponse.__init__(self, content, mimetype)
+    def __init__(self, *args, **kwargs):
+        HttpResponse.__init__(self, *args, **kwargs)
         self.status_code = 404
 
 class HttpResponseForbidden(HttpResponse):
-    def __init__(self, content='', mimetype=DEFAULT_MIME_TYPE):
-        HttpResponse.__init__(self, content, mimetype)
+    def __init__(self, *args, **kwargs):
+        HttpResponse.__init__(self, *args, **kwargs)
         self.status_code = 403
 
 class HttpResponseGone(HttpResponse):
-    def __init__(self, content='', mimetype=DEFAULT_MIME_TYPE):
-        HttpResponse.__init__(self, content, mimetype)
+    def __init__(self, *args, **kwargs):
+        HttpResponse.__init__(self, *args, **kwargs)
         self.status_code = 410
 
 class HttpResponseServerError(HttpResponse):
-    def __init__(self, content='', mimetype=DEFAULT_MIME_TYPE):
-        HttpResponse.__init__(self, content, mimetype)
+    def __init__(self, *args, **kwargs):
+        HttpResponse.__init__(self, *args, **kwargs)
         self.status_code = 500
-
-def populate_apache_request(http_response, mod_python_req):
-    "Populates the mod_python request object with an HttpResponse"
-    mod_python_req.content_type = http_response['Content-Type'] or DEFAULT_MIME_TYPE
-    del http_response['Content-Type']
-    if http_response.cookies:
-        mod_python_req.headers_out['Set-Cookie'] = http_response.cookies.output(header='')
-    for key, value in http_response.headers.items():
-        mod_python_req.headers_out[key] = value
-    mod_python_req.status = http_response.status_code
-    mod_python_req.write(http_response.get_content_as_string('utf-8'))

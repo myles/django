@@ -1,11 +1,12 @@
 from django.parts.auth.formfields import AuthenticationForm
-from django.core import formfields, template_loader
-from django.core.extensions import CMSContext as Context
-from django.models.auth import sessions
+from django.core import formfields
+from django.core.extensions import DjangoContext, render_to_response
+from django.models.auth import users
 from django.models.core import sites
 from django.utils.httpwrappers import HttpResponse, HttpResponseRedirect
 
 REDIRECT_FIELD_NAME = 'next'
+LOGIN_URL = '/accounts/login/'
 
 def login(request):
     "Displays the login form and handles the login action."
@@ -17,46 +18,32 @@ def login(request):
             # Light security check -- make sure redirect_to isn't garbage.
             if not redirect_to or '://' in redirect_to or ' ' in redirect_to:
                 redirect_to = '/accounts/profile/'
-            response = HttpResponseRedirect(redirect_to)
-            sessions.start_web_session(manipulator.get_user_id(), request, response)
-            return response
+            request.session[users.SESSION_KEY] = manipulator.get_user_id()
+            request.session.delete_test_cookie()
+            return HttpResponseRedirect(redirect_to)
     else:
         errors = {}
-    response = HttpResponse()
-    # Set this cookie as a test to see whether the user accepts cookies
-    response.set_cookie(sessions.TEST_COOKIE_NAME, sessions.TEST_COOKIE_VALUE)
-    t = template_loader.get_template('registration/login')
-    c = Context(request, {
+    request.session.set_test_cookie()
+    return render_to_response('registration/login', {
         'form': formfields.FormWrapper(manipulator, request.POST, errors),
         REDIRECT_FIELD_NAME: redirect_to,
         'site_name': sites.get_current().name,
-    })
-    response.write(t.render(c))
-    return response
+    }, context_instance=DjangoContext(request))
 
-def logout(request):
-    "Logs out the user and displays 'You are logged you' message."
-    if request.session:
-        # Do a redirect to this page until the session has been cleared.
-        response = HttpResponseRedirect(request.path)
-        # Delete the cookie by setting a cookie with an empty value and max_age=0
-        response.set_cookie(request.session.get_cookie()[0], '', max_age=0)
-        request.session.delete()
-        return response
+def logout(request, next_page=None):
+    "Logs out the user and displays 'You are logged out' message."
+    try:
+        del request.session[users.SESSION_KEY]
+    except KeyError:
+        return render_to_response('registration/logged_out', context_instance=DjangoContext(request))
     else:
-        t = template_loader.get_template('registration/logged_out')
-        c = Context(request)
-        return HttpResponse(t.render(c))
+        # Redirect to this page until the session has been cleared.
+        return HttpResponseRedirect(next_page or request.path)
 
-def logout_then_login(request):
+def logout_then_login(request, login_url=LOGIN_URL):
     "Logs out the user if he is logged in. Then redirects to the log-in page."
-    response = HttpResponseRedirect('/accounts/login/')
-    if request.session:
-        # Delete the cookie by setting a cookie with an empty value and max_age=0
-        response.set_cookie(request.session.get_cookie()[0], '', max_age=0)
-        request.session.delete()
-    return response
+    return logout(request, login_url)
 
-def redirect_to_login(next):
+def redirect_to_login(next, login_url=LOGIN_URL):
     "Redirects the user to the login page, passing the given 'next' page"
-    return HttpResponseRedirect('/accounts/login/?%s=%s' % (REDIRECT_FIELD_NAME, next))
+    return HttpResponseRedirect('%s?%s=%s' % (login_url, REDIRECT_FIELD_NAME, next))

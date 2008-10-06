@@ -1,11 +1,14 @@
 # Default Django settings. Override these with settings in the module
 # pointed-to by the DJANGO_SETTINGS_MODULE environment variable.
 
+from django.utils.translation import gettext_lazy as _
+
 ####################
 # CORE             #
 ####################
 
 DEBUG = False
+TEMPLATE_DEBUG = False
 
 # Whether to use the "Etag" header. This saves bandwidth but slows down performance.
 USE_ETAGS = False
@@ -28,35 +31,98 @@ TIME_ZONE = 'America/Chicago'
 # http://blogs.law.harvard.edu/tech/stories/storyReader$15
 LANGUAGE_CODE = 'en-us'
 
+# Languages we provide translations for, out of the box. The language name
+# should be the utf-8 encoded local name for the language.
+LANGUAGES = (
+    ('bn', _('Bengali')),
+    ('cs', _('Czech')),
+    ('cy', _('Welsh')),
+    ('da', _('Danish')),
+    ('de', _('German')),
+    ('en', _('English')),
+    ('es', _('Spanish')),
+    ('fr', _('French')),
+    ('gl', _('Galician')),
+    ('is', _('Icelandic')),
+    ('it', _('Italian')),
+    ('ja', _('Japanese')),
+    ('no', _('Norwegian')),
+    ('pt-br', _('Brazilian')),
+    ('ro', _('Romanian')),
+    ('ru', _('Russian')),
+    ('sk', _('Slovak')),
+    ('sr', _('Serbian')),
+    ('sv', _('Swedish')),
+    ('zh-cn', _('Simplified Chinese')),
+    ('zh-tw', _('Traditional Chinese')),
+)
+
 # Not-necessarily-technical managers of the site. They get broken link
 # notifications and other various e-mails.
 MANAGERS = ADMINS
+
+# Default content type and charset to use for all HttpResponse objects, if a
+# MIME type isn't manually specified. These are used to construct the
+# Content-Type header.
+DEFAULT_CONTENT_TYPE = 'text/html'
+DEFAULT_CHARSET = 'utf-8'
 
 # E-mail address that error messages come from.
 SERVER_EMAIL = 'root@localhost'
 
 # Whether to send broken-link e-mails.
-SEND_BROKEN_LINK_EMAILS = True
+SEND_BROKEN_LINK_EMAILS = False
 
 # Database connection info.
-DATABASE_ENGINE = 'postgresql' # 'postgresql' or 'mysql'
-DATABASE_NAME = ''
-DATABASE_USER = ''
-DATABASE_PASSWORD = ''
-DATABASE_HOST = ''             # Set to empty string for localhost
+DATABASE_ENGINE = 'postgresql' # 'postgresql', 'mysql', 'sqlite3' or 'ado_mssql'.
+DATABASE_NAME = ''             # Or path to database file if using sqlite3.
+DATABASE_USER = ''             # Not used with sqlite3.
+DATABASE_PASSWORD = ''         # Not used with sqlite3.
+DATABASE_HOST = ''             # Set to empty string for localhost. Not used with sqlite3.
+DATABASE_PORT = ''             # Set to empty string for default. Not used with sqlite3.
 
 # Host for sending e-mail.
 EMAIL_HOST = 'localhost'
 
-# Name of the session cookie. This can be whatever you want.
-AUTH_SESSION_COOKIE = 'rizzo'
+# List of strings representing installed apps.
+INSTALLED_APPS = ()
 
 # List of locations of the template source files, in search order.
 TEMPLATE_DIRS = ()
 
+# Extension on all templates.
+TEMPLATE_FILE_EXTENSION = '.html'
+
+# List of callables that know how to import templates from various sources.
+# See the comments in django/core/template/loader.py for interface
+# documentation.
+TEMPLATE_LOADERS = (
+    'django.core.template.loaders.filesystem.load_template_source',
+    'django.core.template.loaders.app_directories.load_template_source',
+#     'django.core.template.loaders.eggs.load_template_source',
+)
+
+# List of processors used by DjangoContext to populate the context.
+# Each one should be a callable that takes the request object as its
+# only parameter and returns a dictionary to add to the context.
+TEMPLATE_CONTEXT_PROCESSORS = (
+    'django.core.context_processors.auth',
+    'django.core.context_processors.debug',
+    'django.core.context_processors.i18n',
+)
+
+# URL prefix for admin media -- CSS, JavaScript and images. Make sure to use a
+# trailing slash.
+# Examples: "http://foo.com/media/", "/media/".
+ADMIN_MEDIA_PREFIX = '/media/'
+
 # Default e-mail address to use for various automated correspondence from
 # the site managers.
 DEFAULT_FROM_EMAIL = 'webmaster@localhost'
+
+# Subject-line prefix for email messages send with django.core.mail.mail_admins
+# or ...mail_managers.  Make sure to include the trailing space.
+EMAIL_SUBJECT_PREFIX = '[Django] '
 
 # Whether to append trailing slashes to URLs.
 APPEND_SLASH = True
@@ -85,11 +151,39 @@ ALLOWED_INCLUDE_ROOTS = ()
 # If this is a admin settings module, this should be a list of
 # settings modules (in the format 'foo.bar.baz') for which this admin
 # is an admin.
-ADMIN_FOR = []
+ADMIN_FOR = ()
 
 # 404s that may be ignored.
 IGNORABLE_404_STARTS = ('/cgi-bin/', '/_vti_bin', '/_vti_inf')
 IGNORABLE_404_ENDS = ('mail.pl', 'mailform.pl', 'mail.cgi', 'mailform.cgi', 'favicon.ico', '.php')
+
+# A secret key for this particular Django installation. Used in secret-key
+# hashing algorithms. Set this in your settings, or Django will complain
+# loudly.
+SECRET_KEY = ''
+
+# Path to the "jing" executable -- needed to validate XMLFields
+JING_PATH = "/usr/bin/jing"
+
+# Absolute path to the directory that holds media.
+# Example: "/home/media/media.lawrence.com/"
+MEDIA_ROOT = ''
+
+# URL that handles the media served from MEDIA_ROOT.
+# Example: "http://media.lawrence.com"
+MEDIA_URL = ''
+
+# Default formatting for date objects. See all available format strings here:
+# http://www.djangoproject.com/documentation/templates/#now
+DATE_FORMAT = 'N j, Y'
+
+# Default formatting for datetime objects. See all available format strings here:
+# http://www.djangoproject.com/documentation/templates/#now
+DATETIME_FORMAT = 'N j, Y, P'
+
+# Default formatting for time objects. See all available format strings here:
+# http://www.djangoproject.com/documentation/templates/#now
+TIME_FORMAT = 'P'
 
 ##############
 # MIDDLEWARE #
@@ -99,9 +193,21 @@ IGNORABLE_404_ENDS = ('mail.pl', 'mailform.pl', 'mail.cgi', 'mailform.cgi', 'fav
 # this middleware classes will be applied in the order given, and in the
 # response phase the middleware will be applied in reverse order.
 MIDDLEWARE_CLASSES = (
+    "django.middleware.sessions.SessionMiddleware",
+#     "django.middleware.http.ConditionalGetMiddleware",
+#     "django.middleware.gzip.GZipMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.doc.XViewMiddleware",
 )
+
+############
+# SESSIONS #
+############
+
+SESSION_COOKIE_NAME = 'sessionid'         # Cookie name. This can be whatever you want.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 7 * 2 # Age of cookie, in seconds (default: 2 weeks).
+SESSION_COOKIE_DOMAIN = None              # A string like ".lawrence.com", or None for standard domain cookie.
+SESSION_SAVE_EVERY_REQUEST = False        # Whether to save the session data on every request.
 
 #########
 # CACHE #
@@ -110,9 +216,7 @@ MIDDLEWARE_CLASSES = (
 # The cache backend to use.  See the docstring in django.core.cache for the
 # possible values.
 CACHE_BACKEND = 'simple://'
-
-# Set to a string like ".lawrence.com", or None for a standard domain cookie.
-REGISTRATION_COOKIE_DOMAIN = None
+CACHE_MIDDLEWARE_KEY_PREFIX = ''
 
 ####################
 # COMMENTS         #
@@ -139,11 +243,3 @@ COMMENTS_FIRST_FEW = 0
 # A tuple of IP addresses that have been banned from participating in various
 # Django-powered features.
 BANNED_IPS = ()
-
-# Absolute path to the directory that holds media.
-# Example: "/home/media/media.lawrence.com/"
-MEDIA_ROOT = ''
-
-# URL that handles the media served from MEDIA_ROOT.
-# Example: "http://media.lawrence.com"
-MEDIA_URL = ''
