@@ -27,9 +27,9 @@ try:
 except NameError:
     from sets import Set as set     # Python 2.3 fallback
 
-__all__ = ['Query']
+__all__ = ['Query', 'BaseQuery']
 
-class Query(object):
+class BaseQuery(object):
     """
     A single SQL query.
     """
@@ -291,6 +291,11 @@ class Query(object):
         if self.group_by:
             grouping = self.get_grouping()
             result.append('GROUP BY %s' % ', '.join(grouping))
+
+        if self.having:
+            having, h_params = self.get_having()
+            result.append('HAVING %s' % ', '.join(having))
+            params.extend(h_params)
 
         if ordering:
             result.append('ORDER BY %s' % ', '.join(ordering))
@@ -573,6 +578,24 @@ class Query(object):
                 result.append(str(col))
         return result
 
+    def get_having(self):
+        """
+        Returns a tuple representing the SQL elements in the "having" clause.
+        By default, the elements of self.having have their as_sql() method
+        called or are returned unchanged (if they don't have an as_sql()
+        method).
+        """
+        result = []
+        params = []
+        for elt in self.having:
+            if hasattr(elt, 'as_sql'):
+                sql, params = elt.as_sql()
+                result.append(sql)
+                params.extend(params)
+            else:
+                result.append(elt)
+        return result, params
+
     def get_ordering(self):
         """
         Returns list representing the SQL elements in the "order by" clause.
@@ -585,7 +608,7 @@ class Query(object):
         if self.extra_order_by:
             ordering = self.extra_order_by
         elif not self.default_ordering:
-            ordering = []
+            ordering = self.order_by
         else:
             ordering = self.order_by or self.model._meta.ordering
         qn = self.quote_name_unless_alias
@@ -598,6 +621,12 @@ class Query(object):
             asc, desc = ORDER_DIR['ASC']
         else:
             asc, desc = ORDER_DIR['DESC']
+
+        # It's possible, due to model inheritance, that normal usage might try
+        # to include the same field more than once in the ordering. We track
+        # the table/column pairs we use and discard any after the first use.
+        processed_pairs = set()
+
         for field in ordering:
             if field == '?':
                 result.append(self.connection.ops.random_function_sql())
@@ -615,18 +644,22 @@ class Query(object):
                 # on verbatim.
                 col, order = get_order_dir(field, asc)
                 table, col = col.split('.', 1)
-                elt = '%s.%s' % (qn(table), col)
-                if not distinct or elt in select_aliases:
-                    result.append('%s %s' % (elt, order))
+                if (table, col) not in processed_pairs:
+                    elt = '%s.%s' % (qn(table), col)
+                    processed_pairs.add((table, col))
+                    if not distinct or elt in select_aliases:
+                        result.append('%s %s' % (elt, order))
             elif get_order_dir(field)[0] not in self.extra_select:
                 # 'col' is of the form 'field' or 'field1__field2' or
                 # '-field1__field2__field', etc.
                 for table, col, order in self.find_ordering_name(field,
                         self.model._meta, default_order=asc):
-                    elt = '%s.%s' % (qn(table), qn2(col))
-                    if distinct and elt not in select_aliases:
-                        ordering_aliases.append(elt)
-                    result.append('%s %s' % (elt, order))
+                    if (table, col) not in processed_pairs:
+                        elt = '%s.%s' % (qn(table), qn2(col))
+                        processed_pairs.add((table, col))
+                        if distinct and elt not in select_aliases:
+                            ordering_aliases.append(elt)
+                        result.append('%s %s' % (elt, order))
             else:
                 col, order = get_order_dir(field, asc)
                 elt = qn2(col)
@@ -785,6 +818,7 @@ class Query(object):
         self.where.relabel_aliases(change_map)
         for pos, col in enumerate(self.select):
             if isinstance(col, (list, tuple)):
+                old_alias = col[0]
                 self.select[pos] = (change_map.get(old_alias, old_alias), col[1])
             else:
                 col.relabel_aliases(change_map)
@@ -1467,12 +1501,12 @@ class Query(object):
         clamped to any existing high value.
         """
         if high is not None:
-            if self.high_mark:
+            if self.high_mark is not None:
                 self.high_mark = min(self.high_mark, self.low_mark + high)
             else:
                 self.high_mark = self.low_mark + high
         if low is not None:
-            if self.high_mark:
+            if self.high_mark is not None:
                 self.low_mark = min(self.high_mark, self.low_mark + low)
             else:
                 self.low_mark = self.low_mark + low
@@ -1723,7 +1757,9 @@ class Query(object):
 # Use the backend's custom Query class if it defines one. Otherwise, use the
 # default.
 if connection.features.uses_custom_query_class:
-    Query = connection.ops.query_class(Query)
+    Query = connection.ops.query_class(BaseQuery)
+else:
+    Query = BaseQuery
 
 def get_order_dir(field, default='ASC'):
     """

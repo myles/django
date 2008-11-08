@@ -266,7 +266,7 @@ class ModelAdmin(BaseModelAdmin):
         if self.exclude is None:
             exclude = []
         else:
-            exclude = self.exclude
+            exclude = list(self.exclude)
         defaults = {
             "form": self.form,
             "fields": fields,
@@ -471,17 +471,9 @@ class ModelAdmin(BaseModelAdmin):
         "The 'add' admin view for this model."
         model = self.model
         opts = model._meta
-        app_label = opts.app_label
 
         if not self.has_add_permission(request):
             raise PermissionDenied
-
-        if self.has_change_permission(request, None):
-            # redirect to list view
-            post_url = '../'
-        else:
-            # Object list will give 'Permission Denied', so go back to admin home
-            post_url = '../../../'
 
         ModelForm = self.get_form(request)
         formsets = []
@@ -541,7 +533,7 @@ class ModelAdmin(BaseModelAdmin):
             'inline_admin_formsets': inline_admin_formsets,
             'errors': helpers.AdminErrorList(form, formsets),
             'root_path': self.admin_site.root_path,
-            'app_label': app_label,
+            'app_label': opts.app_label,
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, add=True)
@@ -551,7 +543,6 @@ class ModelAdmin(BaseModelAdmin):
         "The 'change' admin view for this model."
         model = self.model
         opts = model._meta
-        app_label = opts.app_label
 
         try:
             obj = model._default_manager.get(pk=object_id)
@@ -567,7 +558,7 @@ class ModelAdmin(BaseModelAdmin):
         if obj is None:
             raise Http404('%s object with primary key %r does not exist.' % (force_unicode(opts.verbose_name), escape(object_id)))
 
-        if request.POST and request.POST.has_key("_saveasnew"):
+        if request.method == 'POST' and request.POST.has_key("_saveasnew"):
             return self.add_view(request, form_url='../../add/')
 
         ModelForm = self.get_form(request, obj)
@@ -594,6 +585,7 @@ class ModelAdmin(BaseModelAdmin):
                 change_message = self.construct_change_message(request, form, formsets)
                 self.log_change(request, new_object, change_message)
                 return self.response_change(request, new_object)
+                
         else:
             form = ModelForm(instance=obj)
             for FormSet in self.get_formsets(request, obj):
@@ -609,7 +601,7 @@ class ModelAdmin(BaseModelAdmin):
             inline_admin_formset = helpers.InlineAdminFormSet(inline, formset, fieldsets)
             inline_admin_formsets.append(inline_admin_formset)
             media = media + inline_admin_formset.media
-
+        
         context = {
             'title': _('Change %s') % force_unicode(opts.verbose_name),
             'adminform': adminForm,
@@ -620,7 +612,7 @@ class ModelAdmin(BaseModelAdmin):
             'inline_admin_formsets': inline_admin_formsets,
             'errors': helpers.AdminErrorList(form, formsets),
             'root_path': self.admin_site.root_path,
-            'app_label': app_label,
+            'app_label': opts.app_label,
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, change=True, obj=obj)
@@ -689,7 +681,7 @@ class ModelAdmin(BaseModelAdmin):
         if request.POST: # The user has already confirmed the deletion.
             if perms_needed:
                 raise PermissionDenied
-            obj_display = str(obj)
+            obj_display = force_unicode(obj)
             obj.delete()
             
             self.log_deletion(request, obj, obj_display)
@@ -738,8 +730,8 @@ class ModelAdmin(BaseModelAdmin):
         }
         context.update(extra_context or {})
         return render_to_response(self.object_history_template or [
-            "admin/%s/%s/object_history.html" % (opts.app_label, opts.object_name.lower()),
-            "admin/%s/object_history.html" % opts.app_label,
+            "admin/%s/%s/object_history.html" % (app_label, opts.object_name.lower()),
+            "admin/%s/object_history.html" % app_label,
             "admin/object_history.html"
         ], context, context_instance=template.RequestContext(request))
 
@@ -789,7 +781,7 @@ class InlineModelAdmin(BaseModelAdmin):
         if self.exclude is None:
             exclude = []
         else:
-            exclude = self.exclude
+            exclude = list(self.exclude)
         defaults = {
             "form": self.form,
             "formset": self.formset,

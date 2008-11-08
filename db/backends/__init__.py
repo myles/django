@@ -292,7 +292,7 @@ class BaseDatabaseOperations(object):
         """
         return "BEGIN;"
 
-    def sql_for_tablespace(self, tablespace, inline=False):
+    def tablespace_sql(self, tablespace, inline=False):
         """
         Returns the SQL that will be appended to tables or rows to define
         a tablespace. Returns '' if the backend doesn't use tablespaces.
@@ -439,9 +439,13 @@ class BaseDatabaseIntrospection(object):
 
 class BaseDatabaseClient(object):
     """
-    This class encapsualtes all backend-specific methods for opening a
-    client shell
+    This class encapsulates all backend-specific methods for opening a
+    client shell.
     """
+    # This should be a string representing the name of the executable
+    # (e.g., "psql"). Subclasses must override this.
+    executable_name = None
+
     def runshell(self):
         raise NotImplementedError()
 
