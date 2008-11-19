@@ -342,16 +342,16 @@ class ModelAdmin(BaseModelAdmin):
                 for added_object in formset.new_objects:
                     change_message.append(_('Added %(name)s "%(object)s".')
                                           % {'name': added_object._meta.verbose_name,
-                                             'object': added_object})
+                                             'object': force_unicode(added_object)})
                 for changed_object, changed_fields in formset.changed_objects:
                     change_message.append(_('Changed %(list)s for %(name)s "%(object)s".')
                                           % {'list': get_text_list(changed_fields, _('and')),
                                              'name': changed_object._meta.verbose_name,
-                                             'object': changed_object})
+                                             'object': force_unicode(changed_object)})
                 for deleted_object in formset.deleted_objects:
                     change_message.append(_('Deleted %(name)s "%(object)s".')
                                           % {'name': deleted_object._meta.verbose_name,
-                                             'object': deleted_object})
+                                             'object': force_unicode(deleted_object)})
         change_message = ' '.join(change_message)
         return change_message or _('No fields changed.')
     
@@ -556,7 +556,7 @@ class ModelAdmin(BaseModelAdmin):
             raise PermissionDenied
 
         if obj is None:
-            raise Http404('%s object with primary key %r does not exist.' % (force_unicode(opts.verbose_name), escape(object_id)))
+            raise Http404(_('%(name)s object with primary key %(key)r does not exist.') % {'name': force_unicode(opts.verbose_name), 'key': escape(object_id)})
 
         if request.method == 'POST' and request.POST.has_key("_saveasnew"):
             return self.add_view(request, form_url='../../add/')
@@ -670,7 +670,7 @@ class ModelAdmin(BaseModelAdmin):
             raise PermissionDenied
 
         if obj is None:
-            raise Http404('%s object with primary key %r does not exist.' % (force_unicode(opts.verbose_name), escape(object_id)))
+            raise Http404(_('%(name)s object with primary key %(key)r does not exist.') % {'name': force_unicode(opts.verbose_name), 'key': escape(object_id)})
 
         # Populate deleted_objects, a data structure of all related objects that
         # will also be deleted.

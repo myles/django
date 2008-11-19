@@ -41,6 +41,7 @@ def save_instance(form, instance, fields=None, fail_message='saved',
         raise ValueError("The %s could not be %s because the data didn't"
                          " validate." % (opts.object_name, fail_message))
     cleaned_data = form.cleaned_data
+    file_field_list = []
     for f in opts.fields:
         if not f.editable or isinstance(f, models.AutoField) \
                 or not f.name in cleaned_data:
@@ -49,7 +50,16 @@ def save_instance(form, instance, fields=None, fail_message='saved',
             continue
         if exclude and f.name in exclude:
             continue
+        # Defer saving file-type fields until after the other fields, so a
+        # callable upload_to can use the values from other fields.
+        if isinstance(f, models.FileField):
+            file_field_list.append(f)
+        else:
+            f.save_form_data(instance, cleaned_data[f.name])
+            
+    for f in file_field_list:
         f.save_form_data(instance, cleaned_data[f.name])
+        
     # Wrap up the saving of m2m data as a function.
     def save_m2m():
         opts = instance._meta
@@ -224,7 +234,7 @@ class BaseModelForm(BaseForm):
         # equal NULL in SQL we should not do any unique checking for NULL values.
         unique_checks = []
         for check in self.instance._meta.unique_together[:]:
-            fields_on_form = [field for field in check if field in self.cleaned_data and not self.cleaned_data[field] is None]
+            fields_on_form = [field for field in check if self.cleaned_data.get(field) is not None]
             if len(fields_on_form) == len(check):
                 unique_checks.append(check)
 
@@ -238,7 +248,7 @@ class BaseModelForm(BaseForm):
             except FieldDoesNotExist:
                 # This is an extra field that's not on the ModelForm, ignore it
                 continue
-            if f.unique and name in self.cleaned_data and not self.cleaned_data[name] is None:
+            if f.unique and self.cleaned_data.get(name) is not None:
                 unique_checks.append((name,))
 
         bad_fields = set()
@@ -453,7 +463,9 @@ class BaseInlineFormSet(BaseModelFormSet):
         self.save_as_new = save_as_new
         # is there a better way to get the object descriptor?
         self.rel_name = RelatedObject(self.fk.rel.to, self.model, self.fk).get_accessor_name()
-        super(BaseInlineFormSet, self).__init__(data, files, prefix=prefix or self.rel_name)
+        qs = self.model._default_manager.filter(**{self.fk.name: self.instance})
+        super(BaseInlineFormSet, self).__init__(data, files, prefix=prefix or self.rel_name,
+                                                queryset=qs)
 
     def _construct_forms(self):
         if self.save_as_new:
@@ -469,14 +481,6 @@ class BaseInlineFormSet(BaseModelFormSet):
             form.data[form.add_prefix(self._pk_field.name)] = None
         return form
     
-    def get_queryset(self):
-        """
-        Returns this FormSet's queryset, but restricted to children of
-        self.instance
-        """
-        kwargs = {self.fk.name: self.instance}
-        return self.model._default_manager.filter(**kwargs)
-
     def save_new(self, form, commit=True):
         kwargs = {self.fk.get_attname(): self.instance.pk}
         new_obj = self.model(**kwargs)
@@ -539,6 +543,13 @@ def inlineformset_factory(parent_model, model, form=ModelForm,
     # enforce a max_num=1 when the foreign key to the parent model is unique.
     if fk.unique:
         max_num = 1
+    if fields is not None:
+        fields = list(fields)
+        fields.append(fk.name)
+    else:
+        # get all the fields for this model that will be generated.
+        fields = fields_for_model(model, fields, exclude, formfield_callback).keys()
+        fields.append(fk.name)
     kwargs = {
         'form': form,
         'formfield_callback': formfield_callback,
